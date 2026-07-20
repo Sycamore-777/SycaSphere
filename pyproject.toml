@@ -37,5 +37,6 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+explicit_package_bases = true
 packages = ["sycasphere.core"]
 mypy_path = ["packages/sycasphere-core/src"]
