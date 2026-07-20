@@ -13,7 +13,7 @@ For development from this repository workspace, synchronize the root project
 and run through `uv`:
 
 ```bash
-uv sync
+uv sync --locked
 uv run python -c "import sycasphere.core; print(sycasphere.core.__version__)"
 ```
 
@@ -28,7 +28,7 @@ To build and install the published artifact, run the build from the workspace
 root and install the generated wheel:
 
 ```bash
-uv build --package sycasphere-core --out-dir .build/core
+uv build --offline --no-build-isolation --package sycasphere-core --out-dir .build/core
 uv pip install .build/core/sycasphere_core-0.1.0-py3-none-any.whl
 ```
 
@@ -44,7 +44,7 @@ and a `FrameRef` always identifies the state frame.
 from sycasphere.core import CartesianState, Epoch, FrameKind, FrameRef, TimeScale
 
 state = CartesianState(
-    epoch=Epoch(value="2026-07-20T00:00:00Z", scale=TimeScale.UTC),
+    epoch=Epoch(value="2026-07-20T00:00:00Z", time_scale=TimeScale.UTC),
     frame=FrameRef(kind=FrameKind.J2000),
     position_m=(7_000_000.0, 0.0, 0.0),
     velocity_mps=(0.0, 7_500.0, 0.0),
@@ -64,6 +64,16 @@ scale conversion. UTC values are normalized to a `Z` suffix; TAI and TT
 calendar values must not carry a zone or offset. Core has no Orekit, JPype, or
 JDK dependency and never initializes a JVM. A future Orekit adapter owns those
 runtime concerns and maps public frame semantics to its implementation.
+
+## Structured errors and immutable JSON
+
+`ErrorDetail` uses stable machine identifiers for `code` and `component_ref`.
+Its `run_id`, `attempt_id`, and `diagnostic_artifact_ref` fields are optional
+because validation can fail before those resources exist. Diagnostic context
+and plugin configuration schemas are copied and deeply frozen, reject
+non-finite numbers and exception/traceback payloads, and serialize back to
+ordinary JSON objects and arrays. Plugin capabilities serialize as a sorted
+array so equivalent manifests have stable JSON output.
 
 ## Compatibility and plugin selection
 

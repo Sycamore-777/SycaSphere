@@ -62,6 +62,7 @@ requires-python = ">=3.12,<3.13"
 
 [dependency-groups]
 dev = [
+  "hatchling>=1.27,<2",
   "mypy>=1.17,<2",
   "pytest>=8.4,<9",
   "ruff>=0.12,<1",
@@ -248,7 +249,7 @@ class ErrorCategory(StrEnum):
     INTERNAL_ERROR = "INTERNAL_ERROR"
 ```
 
-`ErrorDetail` must be frozen, reject extra fields, use a stable machine-readable `code`, and constrain `context` to JSON-compatible scalar/list/dict values. Do not expose Python/Java exception instances or stack traces through this model.
+`ErrorDetail` must be frozen, reject extra fields, constrain `code` and `component_ref` to non-blank stable machine identifiers, and expose optional non-blank `run_id`, `attempt_id`, and `diagnostic_artifact_ref` values. Its `context` must use the same shared finite, deeply immutable JSON utility as plugin configuration schemas. Reject exception/traceback objects, reserved exception payload keys, and non-finite floats at every nesting depth; serialize the frozen representation as ordinary JSON objects and arrays.
 
 - [ ] **Step 7: Export the contracts and run focused tests**
 
@@ -285,7 +286,7 @@ Cover all of the following:
     ],
 )
 def test_utc_is_normalized_to_z(raw: str, canonical: str) -> None:
-    assert Epoch(value=raw, scale=TimeScale.UTC).value == canonical
+    assert Epoch(value=raw, time_scale=TimeScale.UTC).value == canonical
 ```
 
 Also test:
@@ -318,7 +319,7 @@ class Epoch(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     value: str
-    scale: TimeScale
+    time_scale: TimeScale
 ```
 
 Implement validation in small private pure functions:
@@ -328,6 +329,7 @@ Implement validation in small private pure functions:
 - a narrowly defined regex branch accepts only `second == 60` with a `Z` suffix and otherwise delegates to calendar validation;
 - never silently interpret a timezone-free UTC string using the machine timezone;
 - never convert between UTC, TAI, and TT in Core.
+- normalize every `collections.abc.Mapping` input before field validation, enforce the same UTC/TAI/TT rules for all mappings, and convert UTC offset-normalization overflow into a Pydantic validation error.
 
 - [ ] **Step 4: Run focused tests and inspect JSON round trips**
 
@@ -373,7 +375,7 @@ sensor = FrameRef(
     kind=FrameKind.SENSOR,
     owner_id="sensor-1",
     convention="sensor-boresight-rh",
-    reference_epoch=Epoch(value="2026-07-20T10:00:00Z", scale=TimeScale.UTC),
+    reference_epoch=Epoch(value="2026-07-20T10:00:00Z", time_scale=TimeScale.UTC),
 )
 ```
 
@@ -418,6 +420,8 @@ class ReferenceEllipsoid(StrEnum):
 
 `EarthFixedFrameSpec` and `FrameRef` are frozen Pydantic models with `extra="forbid"`. Use one model-level validator to enforce the combinations listed above. The model must not mention Orekit class names; a docstring may state that the public `J2000` semantic is mapped by a backend adapter.
 
+Use one reusable trimmed, non-blank string constraint for ITRF realization, IERS conventions, EOP data ID, local owner ID, and local convention. Directly test every irrelevant Earth-fixed/local metadata branch.
+
 - [ ] **Step 4: Run focused tests and schema assertions**
 
 Run: `uv run pytest packages/sycasphere-core/tests/test_frames.py -q`
@@ -447,7 +451,7 @@ Build the canonical valid state:
 
 ```python
 state = CartesianState(
-    epoch=Epoch(value="2026-07-20T10:00:00Z", scale=TimeScale.UTC),
+    epoch=Epoch(value="2026-07-20T10:00:00Z", time_scale=TimeScale.UTC),
     frame=FrameRef(kind=FrameKind.J2000),
     position_m=[7_000_000.0, 0.0, 0.0],
     velocity_mps=[0.0, 7_500.0, 0.0],
@@ -575,7 +579,7 @@ class PluginManifest(BaseModel):
     ref: PluginRef
     kind: PluginKind
     capabilities: frozenset[str]
-    configuration_schema: dict[str, JsonValue]
+    configuration_schema: Mapping[str, JsonValue]
     deterministic: bool
     resources: ResourceRequirements
 
@@ -587,6 +591,8 @@ class PluginManifest(BaseModel):
 ```
 
 Validate identifiers and implementation versions with narrowly scoped patterns. Capability selection must use `supports()`; do not infer behavior from a display name or Python import path. Model construction and JSON schema generation must not import or initialize any plugin implementation.
+
+Validate and deeply freeze `configuration_schema` through the shared finite JSON utility used by `ErrorDetail.context`. Serialize `capabilities` as a sorted JSON array so equivalent manifests are byte-stable across input orders and process hash seeds.
 
 - [ ] **Step 4: Run focused tests and prove Core imports without Java**
 
@@ -620,7 +626,7 @@ git commit -m "feat(core): define plugin capability manifests"
 
 - [ ] **Step 1: Write an architecture test that initially detects a deliberate fixture violation**
 
-Write a pure AST scanner helper that calls `Path("packages/sycasphere-core/src/sycasphere/core").rglob("*.py")`, inspects both `ast.Import` and `ast.ImportFrom` nodes, extracts every root module, and rejects these roots:
+Write a pure AST scanner helper that traverses the supplied file or directory with `source_path.rglob("*.py")`, fails clearly for an absent path or an expected directory with no Python sources, inspects both `ast.Import` and `ast.ImportFrom` nodes, extracts every root module, and rejects these roots:
 
 ```python
 FORBIDDEN_IMPORT_ROOTS = frozenset(
@@ -698,7 +704,11 @@ Document:
 
 - [ ] **Step 2: Verify build artifacts in a temporary output directory**
 
-Run: `uv build --package sycasphere-core --out-dir .build/core`
+Run: `uv sync --locked`
+
+Expected: the environment exactly matches `uv.lock`, including the root development dependency on Hatchling.
+
+Run: `uv build --offline --no-build-isolation --package sycasphere-core --out-dir .build/core`
 
 Expected: one sdist and one wheel are produced successfully.
 
@@ -709,6 +719,8 @@ uv run python -c "import zipfile, pathlib; wheel=next(pathlib.Path('.build/core'
 ```
 
 Expected: exit 0. Remove `.build/` only after confirming it is covered by `.gitignore`; this is generated, recoverable build output.
+
+Create a clean virtual environment under the ignored build directory, install the generated wheel without the workspace source path, and run version/import/schema smoke probes against the installed artifact. Resolve and verify the generated environment path remains inside the isolated worktree before recursive cleanup.
 
 - [ ] **Step 3: Run the mandatory repository checks**
 

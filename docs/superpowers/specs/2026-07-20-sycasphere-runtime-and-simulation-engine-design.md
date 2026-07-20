@@ -46,6 +46,8 @@ SycaSphere/
 
 保存纯领域契约：`Epoch`、`FrameRef`、状态、实体、仿真定义、观测、公共异常和模式版本。它不得依赖 Orekit、JPype、JVM、数据库、FastAPI 或前端。
 
+Core 的运行时依赖仍仅为 Pydantic 与 NumPy。根开发锁图显式包含 Hatchling；发布构建先以 `uv sync --locked` 同步，再以 `uv build --offline --no-build-isolation` 使用锁定后端，避免临时解析未跟踪的构建版本。
+
 ### 3.2 sycasphere-engine
 
 保存后端中立的仿真内核：仿真准备、事件调度、时间推进、观测编排、误差与链路编排、交互会话和输出端口。它依赖 Core，但不得导入 Orekit。
@@ -163,18 +165,20 @@ Parquet 按通道和标准测量类型分区，使用明确 SI 单位列；交�
 
 ### 8.1 Epoch
 
-UTC 序列化必须携带 `Z` 或明确偏移，持久化时规范化为 `Z`；`Z` 表示 UTC+00:00。TAI 和 TT 使用对应时间尺度的日历值，不附加 `Z`。绝对时间使用字符串边界表示，时间间隔使用 SI 秒。RunManifest 记录闰秒和时间数据版本。
+`Epoch` 的公共字段固定为 `value` 和 `time_scale`，不提供 `scale` 兼容别名。UTC 序列化必须携带 `Z` 或明确偏移，持久化时规范化为 `Z`；`Z` 表示 UTC+00:00。TAI 和 TT 使用对应时间尺度的日历值，不附加 `Z`。绝对时间使用字符串边界表示，时间间隔使用 SI 秒。RunManifest 记录闰秒和时间数据版本。
 
 ### 8.2 帧定义
 
-- 公共 `J2000` 唯一映射 Earth-centered Orekit `EME2000`；
+- 公共 `J2000` 隐含 Earth-centered 语义，并唯一映射 Orekit `EME2000`，公共模型不重复保存中心天体字段；
 - GCRF 未来需要时作为独立公共帧增加；
-- 地固帧使用 `EARTH_FIXED`，显式声明 ITRF realization、IERS conventions 和 EOP 数据；
+- 地固帧使用 `EARTH_FIXED`，在 `earth_fixed` 子对象内显式声明 ITRF realization、IERS conventions 和 EOP 数据；
 - WGS84 只表示参考椭球；
 - GEODETIC/CARTESIAN 是坐标表示，不是模糊帧名；
-- LVLH、VVLH、BODY 和 SENSOR 必须绑定 owner、约定和构造时刻。
+- LVLH、VVLH、BODY 和 SENSOR 统一绑定 `owner_id`、`convention` 和 `reference_epoch`。
 
 权威转换只由科学后端完成。6×6 状态协方差必须使用完整状态变换 Jacobian。
+
+Core 首版 `CartesianState` 只包含 `epoch`、`frame`、`position_m` 和 `velocity_mps`；不增加可选加速度字段。加速度属于动力学输出或派生量，后续若成为边界契约必须单独评审。
 
 ## 9. SimulationRunRequest
 
@@ -236,7 +240,7 @@ SimulationSession 支持 `status`、`current_epoch`、`resume`、`pause`、`step
 
 ## 12. 结构化错误与资源边界
 
-公共错误类别只使用一套稳定枚举：`VALIDATION_ERROR`、`PLUGIN_MISSING`、`PLUGIN_INCOMPATIBLE`、`BACKEND_INITIALIZATION`、`EXTERNAL_DATA`、`UNSUPPORTED_FRAME`、`UNSUPPORTED_MEASUREMENT`、`UNAUTHORIZED_DATA_ACCESS`、`OUT_OF_ORDER`、`NUMERICAL_FAILURE`、`RESOURCE_EXHAUSTED`、`TIMEOUT`、`CANCELLED` 和 `INTERNAL_ERROR`，不提供同义兼容别名。错误包含稳定类别、用户信息、是否可重试、组件引用、run/attempt 引用和诊断 artifact。
+公共错误类别只使用一套稳定枚举：`VALIDATION_ERROR`、`PLUGIN_MISSING`、`PLUGIN_INCOMPATIBLE`、`BACKEND_INITIALIZATION`、`EXTERNAL_DATA`、`UNSUPPORTED_FRAME`、`UNSUPPORTED_MEASUREMENT`、`UNAUTHORIZED_DATA_ACCESS`、`OUT_OF_ORDER`、`NUMERICAL_FAILURE`、`RESOURCE_EXHAUSTED`、`TIMEOUT`、`CANCELLED` 和 `INTERNAL_ERROR`，不提供同义兼容别名。错误包含稳定类别、机器可读代码、用户信息、是否可重试和组件引用；`run_id`、`attempt_id` 与 `diagnostic_artifact_ref` 在对应资源尚未创建时可以为空，存在时必须非空。错误上下文使用有限、深度不可变 JSON，拒绝异常/回溯对象和保留的异常负载键。
 
 Java 异常不得泄漏为公共类型；Orekit adapter 转换为结构化错误，完整堆栈只进入诊断 artifact。JVM 由单一 runtime 组件启动一次；插件导入和 manifest 读取不得启动 JVM。
 
