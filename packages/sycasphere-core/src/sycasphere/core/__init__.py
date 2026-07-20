@@ -16,12 +16,13 @@
   - __version__: 声明当前 Core 分发包的版本。
   - SchemaVersion: 导出公共模式版本兼容性契约。
   - ErrorCategory 和 ErrorDetail: 导出公共结构化错误契约。
+  - PluginKind、PluginRef 和 PluginManifest: 导出后端中立插件清单契约。
 
 ■ 功能特性:
   ✓ 提供稳定的公共导入接口。
 
 ■ 更新日志:
-  v1.0.0 (2026-07-20): 导出模式版本和结构化错误契约。
+  v1.0.0 (2026-07-20): 导出模式版本、结构化错误和插件清单契约。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
 """
@@ -39,6 +40,7 @@ from sycasphere.core.frames import (
     FrameRef,
     ReferenceEllipsoid,
 )
+from sycasphere.core.plugins import PluginKind, PluginManifest, PluginRef, ResourceRequirements
 from sycasphere.core.schema import SchemaVersion
 from sycasphere.core.states import CartesianState
 
@@ -56,7 +58,11 @@ __all__ = [
     "ErrorDetail",
     "FrameKind",
     "FrameRef",
+    "PluginKind",
+    "PluginManifest",
+    "PluginRef",
     "ReferenceEllipsoid",
+    "ResourceRequirements",
     "SchemaVersion",
     "TimeScale",
     "__version__",
