@@ -1,0 +1,41 @@
+[project]
+name = "sycasphere-workspace"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+
+[dependency-groups]
+dev = [
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<9",
+  "ruff>=0.12,<1",
+  "sycasphere-core",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+sycasphere-core = { workspace = true }
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["packages/*/tests", "tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"*.py" = ["RUF002", "UP009"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["sycasphere.core"]
+mypy_path = ["packages/sycasphere-core/src"]
