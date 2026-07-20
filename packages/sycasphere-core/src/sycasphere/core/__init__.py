@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from typing import Final
 
+from sycasphere.core.epoch import Epoch, TimeScale
 from sycasphere.core.errors import ErrorCategory, ErrorDetail
 from sycasphere.core.schema import SchemaVersion
 
@@ -38,4 +39,11 @@ from sycasphere.core.schema import SchemaVersion
 # =============================👐Seperate👐==============================
 __version__: Final = "0.1.0"
 
-__all__ = ["ErrorCategory", "ErrorDetail", "SchemaVersion", "__version__"]
+__all__ = [
+    "Epoch",
+    "ErrorCategory",
+    "ErrorDetail",
+    "SchemaVersion",
+    "TimeScale",
+    "__version__",
+]
