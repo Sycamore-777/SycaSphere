@@ -236,7 +236,7 @@ SimulationSession 支持 `status`、`current_epoch`、`resume`、`pause`、`step
 
 ## 12. 结构化错误与资源边界
 
-引擎错误类别至少包括验证、插件缺失/不兼容、后端初始化、外部数据、帧/测量不支持、数值失败、资源耗尽、超时、取消和内部错误。错误包含稳定类别、用户信息、是否可重试、组件引用、run/attempt 引用和诊断 artifact。
+公共错误类别只使用一套稳定枚举：`VALIDATION_ERROR`、`PLUGIN_MISSING`、`PLUGIN_INCOMPATIBLE`、`BACKEND_INITIALIZATION`、`EXTERNAL_DATA`、`UNSUPPORTED_FRAME`、`UNSUPPORTED_MEASUREMENT`、`UNAUTHORIZED_DATA_ACCESS`、`OUT_OF_ORDER`、`NUMERICAL_FAILURE`、`RESOURCE_EXHAUSTED`、`TIMEOUT`、`CANCELLED` 和 `INTERNAL_ERROR`，不提供同义兼容别名。错误包含稳定类别、用户信息、是否可重试、组件引用、run/attempt 引用和诊断 artifact。
 
 Java 异常不得泄漏为公共类型；Orekit adapter 转换为结构化错误，完整堆栈只进入诊断 artifact。JVM 由单一 runtime 组件启动一次；插件导入和 manifest 读取不得启动 JVM。
 

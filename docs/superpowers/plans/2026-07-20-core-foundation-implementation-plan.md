@@ -209,7 +209,7 @@ Test serialization and frozen behavior for:
 
 ```python
 error = ErrorDetail(
-    category=ErrorCategory.VALIDATION,
+    category=ErrorCategory.VALIDATION_ERROR,
     code="CORE.INVALID_FRAME",
     message="EARTH_FIXED requires earth-fixed metadata",
     retryable=False,
@@ -228,22 +228,24 @@ Expected: FAIL because the error contracts do not exist.
 
 - [ ] **Step 6: Implement public error categories and payload**
 
-Define at least these categories from the approved design:
+Define exactly this single category set from the approved design. Do not expose legacy aliases:
 
 ```python
 class ErrorCategory(StrEnum):
-    VALIDATION = "VALIDATION"
+    VALIDATION_ERROR = "VALIDATION_ERROR"
     PLUGIN_MISSING = "PLUGIN_MISSING"
     PLUGIN_INCOMPATIBLE = "PLUGIN_INCOMPATIBLE"
     BACKEND_INITIALIZATION = "BACKEND_INITIALIZATION"
     EXTERNAL_DATA = "EXTERNAL_DATA"
     UNSUPPORTED_FRAME = "UNSUPPORTED_FRAME"
     UNSUPPORTED_MEASUREMENT = "UNSUPPORTED_MEASUREMENT"
+    UNAUTHORIZED_DATA_ACCESS = "UNAUTHORIZED_DATA_ACCESS"
+    OUT_OF_ORDER = "OUT_OF_ORDER"
     NUMERICAL_FAILURE = "NUMERICAL_FAILURE"
     RESOURCE_EXHAUSTED = "RESOURCE_EXHAUSTED"
     TIMEOUT = "TIMEOUT"
     CANCELLED = "CANCELLED"
-    INTERNAL = "INTERNAL"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
 ```
 
 `ErrorDetail` must be frozen, reject extra fields, use a stable machine-readable `code`, and constrain `context` to JSON-compatible scalar/list/dict values. Do not expose Python/Java exception instances or stack traces through this model.
