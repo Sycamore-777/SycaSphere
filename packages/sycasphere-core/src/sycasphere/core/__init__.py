@@ -40,6 +40,7 @@ from sycasphere.core.frames import (
     ReferenceEllipsoid,
 )
 from sycasphere.core.schema import SchemaVersion
+from sycasphere.core.states import CartesianState
 
 # =============================👐Seperate👐==============================
 # Public package metadata and contracts
@@ -47,6 +48,7 @@ from sycasphere.core.schema import SchemaVersion
 __version__: Final = "0.1.0"
 
 __all__ = [
+    "CartesianState",
     "CoordinateRepresentation",
     "EarthFixedFrameSpec",
     "Epoch",
