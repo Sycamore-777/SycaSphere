@@ -47,7 +47,7 @@ from sycasphere.core import (
 # =============================👐Seperate👐=============================
 # Cartesian state contract tests
 # =============================👐Seperate👐=============================
-_EPOCH = Epoch(value="2026-07-20T10:00:00Z", scale=TimeScale.UTC)
+_EPOCH = Epoch(value="2026-07-20T10:00:00Z", time_scale=TimeScale.UTC)
 _FRAME = FrameRef(kind=FrameKind.J2000)
 
 
@@ -114,7 +114,7 @@ def test_state_serializes_si_unit_fields_as_json_arrays() -> None:
     state = _valid_state()
 
     assert state.model_dump(mode="json") == {
-        "epoch": {"value": "2026-07-20T10:00:00Z", "scale": "UTC"},
+        "epoch": {"value": "2026-07-20T10:00:00Z", "time_scale": "UTC"},
         "frame": {
             "kind": "J2000",
             "representation": "CARTESIAN",

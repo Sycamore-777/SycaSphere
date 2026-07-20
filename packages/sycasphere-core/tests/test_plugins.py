@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-20
 最后修改  : 2026-07-20
-版本号    : v1.0.1
+版本号    : v1.1.0
 
 ■ 用途说明:
   验证后端中立插件标识、能力和资源声明契约。
@@ -18,9 +18,10 @@
 
 ■ 功能特性:
   ✓ 覆盖插件清单、能力、版本兼容性和边界验证。
-  ✓ 覆盖配置模式深度不可变性和输入别名隔离。
+  ✓ 覆盖配置模式有限值、深度不可变性、输入别名隔离和确定性序列化。
 
 ■ 更新日志:
+  v1.1.0 (2026-07-20): 覆盖共享有限 JSON 规则和能力规范排序输出。
   v1.0.1 (2026-07-20): 覆盖配置模式冻结、标识语法和 ASCII SemVer。
   v1.0.0 (2026-07-20): 创建插件清单契约测试。
 
@@ -28,6 +29,8 @@
 """
 
 from __future__ import annotations
+
+import math
 
 import pytest
 from pydantic import ValidationError
@@ -116,6 +119,34 @@ def test_manifest_configuration_schema_json_dump_and_round_trip() -> None:
 
     assert serialized["configuration_schema"]["required"] == ["step_size_s"]
     assert restored.model_dump(mode="json") == serialized
+
+
+@pytest.mark.parametrize("invalid_value", [math.nan, math.inf, -math.inf])
+def test_manifest_rejects_non_finite_configuration_schema_values(
+    invalid_value: float,
+) -> None:
+    manifest_data = _complete_manifest().model_dump(mode="python")
+    manifest_data["configuration_schema"] = {
+        "properties": {"threshold": {"default": [invalid_value]}},
+    }
+
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(manifest_data)
+
+
+def test_manifest_serializes_capabilities_in_canonical_sorted_order() -> None:
+    first_data = _complete_manifest().model_dump(mode="python")
+    second_data = _complete_manifest().model_dump(mode="python")
+    first_data["capabilities"] = ["propagation.numerical", "frames.j2000"]
+    second_data["capabilities"] = ["frames.j2000", "propagation.numerical"]
+
+    first = PluginManifest.model_validate(first_data)
+    second = PluginManifest.model_validate(second_data)
+
+    expected = ["frames.j2000", "propagation.numerical"]
+    assert first.model_dump(mode="json")["capabilities"] == expected
+    assert second.model_dump(mode="json")["capabilities"] == expected
+    assert first.model_dump_json() == second.model_dump_json()
 
 
 def test_manifest_json_schema_describes_configuration_schema() -> None:

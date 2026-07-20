@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-20
 最后修改  : 2026-07-20
-版本号    : v1.0.0
+版本号    : v1.1.0
 
 ■ 用途说明:
   定义带显式时间尺度的不可变 Epoch 边界模型，并规范化 UTC 字符串。
@@ -17,10 +17,11 @@
   - _validate_unzoned_calendar: 校验 TAI 和 TT 的无时区日历字符串。
 
 ■ 功能特性:
-  ✓ 统一 UTC 偏移表示而不执行时间尺度转换。
+  ✓ 统一通用映射输入的 UTC 偏移表示而不执行时间尺度转换。
   ✓ 仅以受限语法接受 Z 后缀闰秒字符串。
 
 ■ 更新日志:
+  v1.1.0 (2026-07-20): 将公共字段改为 time_scale 并封装 UTC 日期边界溢出。
   v1.0.0 (2026-07-20): 创建带时间尺度的 Epoch 契约。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -29,6 +30,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -115,10 +117,13 @@ def _normalize_utc(value: str) -> str:
     )
     try:
         parsed = datetime.fromisoformat(normalized_input)
+        utc_value = parsed.astimezone(UTC)
     except ValueError as error:
         raise ValueError("UTC Epoch value contains an invalid offset") from error
-
-    utc_value = parsed.astimezone(UTC)
+    except OverflowError as error:
+        raise ValueError(
+            "UTC Epoch offset normalization exceeds the supported date range"
+        ) from error
     fraction = _canonical_fraction(calendar_match["fraction"])
     return f"{utc_value:%Y-%m-%dT%H:%M:%S}{fraction}Z"
 
@@ -143,19 +148,20 @@ class Epoch(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     value: str
-    scale: TimeScale
+    time_scale: TimeScale
 
     @model_validator(mode="before")
     @classmethod
     def _validate_value_for_scale(cls, data: Any) -> Any:
         """Canonicalize the supplied value according to its explicitly declared scale."""
-        if not isinstance(data, dict):
+        if not isinstance(data, Mapping):
             return data
 
-        value = data.get("value")
-        scale = data.get("scale")
+        normalized_data = dict(data)
+        value = normalized_data.get("value")
+        scale = normalized_data.get("time_scale")
         if not isinstance(value, str) or not isinstance(scale, (str, TimeScale)):
-            return data
+            return normalized_data
 
         parsed_scale = TimeScale(scale)
         normalized = (
@@ -163,4 +169,4 @@ class Epoch(BaseModel):
             if parsed_scale is TimeScale.UTC
             else _validate_unzoned_calendar(value, parsed_scale)
         )
-        return {**data, "value": normalized}
+        return {**normalized_data, "value": normalized}

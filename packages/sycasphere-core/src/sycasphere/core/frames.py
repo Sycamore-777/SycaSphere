@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-20
 最后修改  : 2026-07-20
-版本号    : v1.0.0
+版本号    : v1.1.0
 
 ■ 用途说明:
   定义不泄漏科学后端实现的公共坐标系引用和坐标表示契约。
@@ -19,9 +19,10 @@
 ■ 功能特性:
   ✓ 提供六种稳定的公共帧语义。
   ✓ 区分地固帧与 WGS84 参考椭球。
-  ✓ 保持公共帧引用和元数据不可变。
+  ✓ 规范化必需元数据并保持公共帧引用不可变。
 
 ■ 更新日志:
+  v1.1.0 (2026-07-20): 集中约束并规范化地固与局部帧必需字符串。
   v1.0.0 (2026-07-20): 创建公共坐标系引用契约。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -32,8 +33,13 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 from sycasphere.core.epoch import Epoch
+
+type RequiredFrameMetadata = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1),
+]
 
 
 # =============================👐Seperate👐==============================
@@ -71,9 +77,9 @@ class EarthFixedFrameSpec(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    itrf_realization: Annotated[str, Field(min_length=1)]
-    iers_conventions: Annotated[str, Field(min_length=1)]
-    eop_data_id: Annotated[str, Field(min_length=1)]
+    itrf_realization: RequiredFrameMetadata
+    iers_conventions: RequiredFrameMetadata
+    eop_data_id: RequiredFrameMetadata
 
 
 class FrameRef(BaseModel):
@@ -85,8 +91,8 @@ class FrameRef(BaseModel):
     representation: CoordinateRepresentation = CoordinateRepresentation.CARTESIAN
     earth_fixed: EarthFixedFrameSpec | None = None
     ellipsoid: ReferenceEllipsoid | None = None
-    owner_id: Annotated[str | None, Field(min_length=1)] = None
-    convention: Annotated[str | None, Field(min_length=1)] = None
+    owner_id: RequiredFrameMetadata | None = None
+    convention: RequiredFrameMetadata | None = None
     reference_epoch: Epoch | None = None
 
     @model_validator(mode="after")

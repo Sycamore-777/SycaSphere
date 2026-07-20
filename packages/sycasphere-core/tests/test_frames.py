@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-20
 最后修改  : 2026-07-20
-版本号    : v1.0.0
+版本号    : v1.1.0
 
 ■ 用途说明:
   验证公共坐标系引用的允许组合、不变量和不可变性。
@@ -18,9 +18,10 @@
 
 ■ 功能特性:
   ✓ 覆盖公共帧种类和后端泄漏防护。
-  ✓ 覆盖帧元数据组合和模型不可变性。
+  ✓ 覆盖帧元数据组合、非空规范化和模型不可变性。
 
 ■ 更新日志:
+  v1.1.0 (2026-07-20): 覆盖必需元数据规范化和全部无关元数据分支。
   v1.0.0 (2026-07-20): 创建公共帧引用契约测试。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -43,7 +44,7 @@ from sycasphere.core import (
 # =============================👐Seperate👐==============================
 # Public frame-reference contract tests
 # =============================👐Seperate👐==============================
-_REFERENCE_EPOCH = Epoch(value="2026-07-20T10:00:00Z", scale=TimeScale.UTC)
+_REFERENCE_EPOCH = Epoch(value="2026-07-20T10:00:00Z", time_scale=TimeScale.UTC)
 _EARTH_FIXED_SPEC = EarthFixedFrameSpec(
     itrf_realization="ITRF2020",
     iers_conventions="IERS_2010",
@@ -114,9 +115,32 @@ def test_earth_fixed_provenance_rejects_blank_required_values(field_name: str) -
 
 
 @pytest.mark.parametrize(
+    "field_name",
+    ["itrf_realization", "iers_conventions", "eop_data_id"],
+)
+def test_earth_fixed_provenance_rejects_whitespace_only_values(field_name: str) -> None:
+    metadata = _EARTH_FIXED_SPEC.model_dump()
+    metadata[field_name] = " \t "
+
+    with pytest.raises(ValidationError):
+        EarthFixedFrameSpec(**metadata)
+
+
+def test_earth_fixed_provenance_trims_surrounding_whitespace() -> None:
+    spec = EarthFixedFrameSpec(
+        itrf_realization=" ITRF2020 ",
+        iers_conventions=" IERS_2010 ",
+        eop_data_id=" iers-bulletin-a:2026-07-20 ",
+    )
+
+    assert spec == _EARTH_FIXED_SPEC
+
+
+@pytest.mark.parametrize(
     "metadata",
     [
         {"earth_fixed": _EARTH_FIXED_SPEC},
+        {"ellipsoid": ReferenceEllipsoid.WGS84},
         {"owner_id": "spacecraft-1"},
         {"convention": "inertial"},
         {"reference_epoch": _REFERENCE_EPOCH},
@@ -145,6 +169,18 @@ def test_geodetic_representation_is_rejected_outside_earth_fixed(kind: FrameKind
         )
 
 
+@pytest.mark.parametrize("kind", [FrameKind.BODY, FrameKind.SENSOR])
+def test_remaining_local_frames_reject_geodetic_representation(kind: FrameKind) -> None:
+    with pytest.raises(ValidationError):
+        FrameRef(
+            kind=kind,
+            representation=CoordinateRepresentation.GEODETIC,
+            owner_id="spacecraft-1",
+            convention="local-rh",
+            reference_epoch=_REFERENCE_EPOCH,
+        )
+
+
 def test_geodetic_earth_fixed_requires_wgs84_ellipsoid() -> None:
     with pytest.raises(ValidationError):
         FrameRef(
@@ -165,6 +201,31 @@ def test_geodetic_earth_fixed_accepts_wgs84_ellipsoid() -> None:
     assert frame.ellipsoid is ReferenceEllipsoid.WGS84
 
 
+def test_cartesian_earth_fixed_rejects_irrelevant_ellipsoid() -> None:
+    with pytest.raises(ValidationError):
+        FrameRef(
+            kind=FrameKind.EARTH_FIXED,
+            representation=CoordinateRepresentation.CARTESIAN,
+            earth_fixed=_EARTH_FIXED_SPEC,
+            ellipsoid=ReferenceEllipsoid.WGS84,
+        )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"owner_id": "spacecraft-1"},
+        {"convention": "earth-fixed"},
+        {"reference_epoch": _REFERENCE_EPOCH},
+    ],
+)
+def test_earth_fixed_rejects_each_irrelevant_local_metadata_field(
+    metadata: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        FrameRef(kind=FrameKind.EARTH_FIXED, earth_fixed=_EARTH_FIXED_SPEC, **metadata)
+
+
 @pytest.mark.parametrize(
     "kind",
     [FrameKind.LVLH, FrameKind.VVLH, FrameKind.BODY, FrameKind.SENSOR],
@@ -183,6 +244,59 @@ def test_local_frames_require_owner_convention_and_reference_epoch(
 
     with pytest.raises(ValidationError):
         FrameRef(kind=kind, **metadata)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["owner_id", "convention"],
+)
+def test_local_frame_required_strings_reject_whitespace_only(field_name: str) -> None:
+    metadata: dict[str, object] = {
+        "owner_id": "spacecraft-1",
+        "convention": "local-rh",
+        "reference_epoch": _REFERENCE_EPOCH,
+    }
+    metadata[field_name] = " \t "
+
+    with pytest.raises(ValidationError):
+        FrameRef(kind=FrameKind.LVLH, **metadata)
+
+
+def test_local_frame_required_strings_trim_surrounding_whitespace() -> None:
+    frame = FrameRef(
+        kind=FrameKind.LVLH,
+        owner_id=" spacecraft-1 ",
+        convention=" local-rh ",
+        reference_epoch=_REFERENCE_EPOCH,
+    )
+
+    assert frame.owner_id == "spacecraft-1"
+    assert frame.convention == "local-rh"
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [FrameKind.LVLH, FrameKind.VVLH, FrameKind.BODY, FrameKind.SENSOR],
+)
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"earth_fixed": _EARTH_FIXED_SPEC},
+        {"ellipsoid": ReferenceEllipsoid.WGS84},
+    ],
+)
+def test_local_frames_reject_each_irrelevant_earth_fixed_metadata_field(
+    kind: FrameKind,
+    metadata: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        FrameRef(
+            kind=kind,
+            owner_id="spacecraft-1",
+            convention="local-rh",
+            reference_epoch=_REFERENCE_EPOCH,
+            **metadata,
+        )
 
 
 def test_frame_models_reject_extra_fields_and_post_construction_mutation() -> None:

@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-20
 最后修改  : 2026-07-20
-版本号    : v1.0.1
+版本号    : v1.1.0
 
 ■ 用途说明:
   定义后端中立、仅数据化且深度不可变的插件标识、能力和资源声明契约。
@@ -18,10 +18,12 @@
 
 ■ 功能特性:
   ✓ 验证稳定插件标识、能力标识和 SemVer 2.0 实现版本。
-  ✓ 冻结配置模式嵌套映射和序列，防止输入别名修改。
+  ✓ 冻结有限配置模式嵌套映射和序列，防止输入别名修改。
+  ✓ 规范排序能力数组以获得确定性公共序列化。
   ✓ 不导入、加载或初始化任何插件实现。
 
 ■ 更新日志:
+  v1.1.0 (2026-07-20): 复用共享有限 JSON 工具并规范排序能力序列化。
   v1.0.1 (2026-07-20): 深度冻结配置模式并扩展稳定标识语法。
   v1.0.0 (2026-07-20): 创建插件身份和能力清单契约。
 
@@ -33,7 +35,6 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from enum import StrEnum
-from types import MappingProxyType
 from typing import Any
 
 from pydantic import (
@@ -43,6 +44,12 @@ from pydantic import (
     NonNegativeInt,
     field_serializer,
     field_validator,
+)
+from sycasphere.core._json import (
+    FrozenJsonValue,
+    freeze_json_object,
+    normalize_json_object,
+    thaw_json_value,
 )
 from sycasphere.core.schema import SchemaVersion
 
@@ -57,9 +64,6 @@ _SEMVER_PATTERN = re.compile(
     rf"(?:-{_SEMVER_PRERELEASE_IDENTIFIER}(?:\.{_SEMVER_PRERELEASE_IDENTIFIER})*)?"
     rf"(?:\+{_SEMVER_BUILD_IDENTIFIER}(?:\.{_SEMVER_BUILD_IDENTIFIER})*)?$"
 )
-type FrozenJsonValue = (
-    bool | float | int | str | None | Mapping[str, FrozenJsonValue] | tuple[FrozenJsonValue, ...]
-)
 
 
 def _validate_segmented_identifier(value: str, field_name: str) -> str:
@@ -70,26 +74,6 @@ def _validate_segmented_identifier(value: str, field_name: str) -> str:
             "'.', '_', or '-', for example 'sycasphere.orekit'"
         )
         raise ValueError(msg)
-    return value
-
-
-def _freeze_json_value(value: JsonValue) -> FrozenJsonValue:
-    """Return a recursively immutable copy of a JSON-compatible value."""
-    if isinstance(value, dict):
-        return MappingProxyType(
-            {key: _freeze_json_value(nested_value) for key, nested_value in value.items()}
-        )
-    if isinstance(value, list):
-        return tuple(_freeze_json_value(item) for item in value)
-    return value
-
-
-def _thaw_json_value(value: FrozenJsonValue) -> JsonValue:
-    """Return a JSON-compatible mutable representation for Pydantic serialization."""
-    if isinstance(value, Mapping):
-        return {key: _thaw_json_value(nested_value) for key, nested_value in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw_json_value(item) for item in value]
     return value
 
 
@@ -151,22 +135,31 @@ class PluginManifest(BaseModel):
     deterministic: bool
     resources: ResourceRequirements
 
+    @field_validator("configuration_schema", mode="before")
+    @classmethod
+    def normalize_configuration_schema(cls, value: Any) -> dict[str, JsonValue]:
+        """Normalize supported mappings and reject non-finite or non-JSON values."""
+        return normalize_json_object(value)
+
     @field_validator("configuration_schema")
     @classmethod
     def freeze_configuration_schema(
         cls, value: Mapping[str, JsonValue]
     ) -> Mapping[str, FrozenJsonValue]:
         """Store an immutable, alias-independent configuration-schema snapshot."""
-        return MappingProxyType(
-            {key: _freeze_json_value(nested_value) for key, nested_value in value.items()}
-        )
+        return freeze_json_object(value)
 
     @field_serializer("configuration_schema", when_used="always")
     def serialize_configuration_schema(
         self, value: Mapping[str, FrozenJsonValue]
     ) -> dict[str, JsonValue]:
         """Serialize the immutable snapshot as ordinary JSON objects and arrays."""
-        return {key: _thaw_json_value(nested_value) for key, nested_value in value.items()}
+        return {key: thaw_json_value(nested_value) for key, nested_value in value.items()}
+
+    @field_serializer("capabilities", when_used="always")
+    def serialize_capabilities(self, value: frozenset[str]) -> list[str]:
+        """Serialize capabilities as a canonical sorted JSON array."""
+        return sorted(value)
 
     @field_validator("capabilities", mode="before")
     @classmethod

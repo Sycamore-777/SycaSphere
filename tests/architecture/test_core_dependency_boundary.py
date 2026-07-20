@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-20
 最后修改  : 2026-07-20
-版本号    : v1.0.0
+版本号    : v1.1.0
 
 ■ 用途说明:
   验证 Core 源码不依赖基础设施或科学后端模块。
@@ -18,9 +18,10 @@
 
 ■ 功能特性:
   ✓ 通过 AST 检查普通导入和 from 导入。
-  ✓ 使用临时文件验证拒绝行为，不污染生产源码。
+  ✓ 使用临时文件和目录验证拒绝行为与明确的源树错误，不污染生产源码。
 
 ■ 更新日志:
+  v1.1.0 (2026-07-20): 验证扫描器使用调用方目录并拒绝不存在或空源树。
   v1.0.0 (2026-07-20): 新增 Core 依赖边界测试。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -30,6 +31,8 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+
+import pytest
 
 # =============================👐Seperate👐=============================
 # Core dependency-boundary tests
@@ -48,11 +51,12 @@ FORBIDDEN_IMPORT_ROOTS = frozenset(
 
 def _find_forbidden_imports(source_path: Path) -> dict[Path, set[str]]:
     """Return forbidden import roots found in one Python file or a source tree."""
-    source_files = (
-        (source_path,)
-        if source_path.is_file()
-        else Path("packages/sycasphere-core/src/sycasphere/core").rglob("*.py")
-    )
+    if not source_path.exists():
+        raise FileNotFoundError(f"source path does not exist: {source_path}")
+
+    source_files = (source_path,) if source_path.is_file() else tuple(source_path.rglob("*.py"))
+    if not source_files:
+        raise ValueError(f"source tree does not contain any Python source files: {source_path}")
     violations: dict[Path, set[str]] = {}
 
     for python_file in source_files:
@@ -93,6 +97,32 @@ def test_scanner_ignores_relative_import_from_in_temporary_file(tmp_path: Path) 
     source_file.write_text("from .jpype import Adapter\n", encoding="utf-8")
 
     assert _find_forbidden_imports(source_file) == {}
+
+
+def test_scanner_traverses_the_supplied_directory(tmp_path: Path) -> None:
+    """A caller-supplied source tree, including nested modules, must be scanned."""
+    source_file = tmp_path / "nested" / "adapter.py"
+    source_file.parent.mkdir()
+    source_file.write_text("import orekit\n", encoding="utf-8")
+
+    assert _find_forbidden_imports(tmp_path) == {source_file: {"orekit"}}
+
+
+def test_scanner_rejects_an_absent_source_tree(tmp_path: Path) -> None:
+    """A missing expected source tree must fail instead of appearing dependency-clean."""
+    missing_source_tree = tmp_path / "missing"
+
+    with pytest.raises(FileNotFoundError, match="source path does not exist"):
+        _find_forbidden_imports(missing_source_tree)
+
+
+def test_scanner_rejects_an_empty_source_tree(tmp_path: Path) -> None:
+    """An expected source tree without Python modules must fail clearly."""
+    empty_source_tree = tmp_path / "empty"
+    empty_source_tree.mkdir()
+
+    with pytest.raises(ValueError, match="does not contain any Python source files"):
+        _find_forbidden_imports(empty_source_tree)
 
 
 def test_core_source_tree_has_no_forbidden_imports() -> None:
