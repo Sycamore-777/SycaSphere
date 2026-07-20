@@ -682,6 +682,7 @@ git commit -m "test(core): lock public schemas and dependency boundary"
 
 - Create: `packages/sycasphere-core/README.md`
 - Modify: `README.md`
+- Modify: `.gitignore`（加入 `.build/`，使验证构建产物保持未跟踪）
 - Modify only if an actual contradiction remains: `docs/superpowers/specs/2026-07-20-sycasphere-runtime-and-simulation-engine-design.md`
 
 - [ ] **Step 1: Write Core installation and usage documentation**
@@ -751,7 +752,7 @@ Review the complete Phase 1 diff specifically for:
 - [ ] **Step 5: Commit documentation after all checks pass**
 
 ```bash
-git add README.md packages/sycasphere-core/README.md
+git add .gitignore README.md packages/sycasphere-core/README.md
 git commit -m "docs: document core foundation package"
 ```
 
