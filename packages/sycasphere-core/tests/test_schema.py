@@ -19,6 +19,9 @@
 ■ 功能特性:
   ✓ 覆盖模式版本验证、兼容性和冻结行为。
 
+■ 待办事项:
+  - 无
+
 ■ 更新日志:
   v1.0.0 (2026-07-20): 创建模式版本契约测试。
 
@@ -40,6 +43,20 @@ def test_schema_version_accepts_same_major_and_newer_minor() -> None:
     provided = SchemaVersion(major=1, minor=3)
 
     assert provided.satisfies(required)
+
+
+def test_schema_version_accepts_same_major_and_equal_minor() -> None:
+    required = SchemaVersion(major=1, minor=1)
+    provided = SchemaVersion(major=1, minor=1)
+
+    assert provided.satisfies(required)
+
+
+def test_schema_version_rejects_same_major_and_older_minor() -> None:
+    required = SchemaVersion(major=1, minor=3)
+    provided = SchemaVersion(major=1, minor=1)
+
+    assert not provided.satisfies(required)
 
 
 def test_schema_version_rejects_different_major() -> None:

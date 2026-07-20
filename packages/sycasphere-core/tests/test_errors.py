@@ -19,6 +19,9 @@
 ■ 功能特性:
   ✓ 覆盖错误类别、冻结行为和 JSON 上下文限制。
 
+■ 待办事项:
+  - 无
+
 ■ 更新日志:
   v1.0.0 (2026-07-20): 创建结构化错误契约测试。
 
@@ -33,10 +36,27 @@ import pytest
 from pydantic import ValidationError
 from sycasphere.core import ErrorCategory, ErrorDetail
 
-
 # =============================👐Seperate👐==============================
 # Structured-error payload tests
 # =============================👐Seperate👐==============================
+EXPECTED_ERROR_CATEGORIES = {
+    "VALIDATION_ERROR",
+    "PLUGIN_MISSING",
+    "PLUGIN_INCOMPATIBLE",
+    "BACKEND_INITIALIZATION",
+    "EXTERNAL_DATA",
+    "UNSUPPORTED_FRAME",
+    "UNSUPPORTED_MEASUREMENT",
+    "UNAUTHORIZED_DATA_ACCESS",
+    "OUT_OF_ORDER",
+    "NUMERICAL_FAILURE",
+    "RESOURCE_EXHAUSTED",
+    "TIMEOUT",
+    "CANCELLED",
+    "INTERNAL_ERROR",
+}
+
+
 def _traceback_object() -> TracebackType:
     try:
         raise ValueError("traceback")
@@ -47,7 +67,7 @@ def _traceback_object() -> TracebackType:
 
 def test_error_detail_serializes_to_stable_json_values() -> None:
     error = ErrorDetail(
-        category=ErrorCategory.VALIDATION,
+        category=ErrorCategory.VALIDATION_ERROR,
         code="CORE.INVALID_FRAME",
         message="EARTH_FIXED requires earth-fixed metadata",
         retryable=False,
@@ -56,7 +76,7 @@ def test_error_detail_serializes_to_stable_json_values() -> None:
     )
 
     assert error.model_dump(mode="json") == {
-        "category": "VALIDATION",
+        "category": "VALIDATION_ERROR",
         "code": "CORE.INVALID_FRAME",
         "message": "EARTH_FIXED requires earth-fixed metadata",
         "retryable": False,
@@ -65,9 +85,17 @@ def test_error_detail_serializes_to_stable_json_values() -> None:
     }
 
 
+def test_error_category_exposes_exact_approved_values_without_aliases() -> None:
+    assert set(ErrorCategory.__members__) == EXPECTED_ERROR_CATEGORIES
+    assert {category.value for category in ErrorCategory} == EXPECTED_ERROR_CATEGORIES
+    assert len(ErrorCategory.__members__) == len(ErrorCategory)
+    assert not hasattr(ErrorCategory, "VALIDATION")
+    assert not hasattr(ErrorCategory, "INTERNAL")
+
+
 def test_error_detail_is_frozen() -> None:
     error = ErrorDetail(
-        category=ErrorCategory.VALIDATION,
+        category=ErrorCategory.VALIDATION_ERROR,
         code="CORE.INVALID_FRAME",
         message="EARTH_FIXED requires earth-fixed metadata",
         retryable=False,
@@ -82,7 +110,7 @@ def test_error_detail_is_frozen() -> None:
 def test_error_detail_rejects_extra_fields() -> None:
     with pytest.raises(ValidationError):
         ErrorDetail(
-            category=ErrorCategory.INTERNAL,
+            category=ErrorCategory.INTERNAL_ERROR,
             code="CORE.INTERNAL",
             message="An internal error occurred",
             retryable=False,
@@ -96,7 +124,7 @@ def test_error_detail_rejects_extra_fields() -> None:
 def test_error_detail_rejects_non_json_context_values(context_value: object) -> None:
     with pytest.raises(ValidationError):
         ErrorDetail(
-            category=ErrorCategory.INTERNAL,
+            category=ErrorCategory.INTERNAL_ERROR,
             code="CORE.INTERNAL",
             message="An internal error occurred",
             retryable=False,

@@ -20,6 +20,9 @@
   ✓ 拒绝未知字段和非 JSON 诊断上下文值。
   ✓ 不承载 Python/Java 异常或堆栈跟踪对象。
 
+■ 待办事项:
+  - 无
+
 ■ 更新日志:
   v1.0.0 (2026-07-20): 创建结构化错误契约。
 
@@ -39,18 +42,20 @@ from pydantic import BaseModel, ConfigDict, JsonValue
 class ErrorCategory(StrEnum):
     """Stable categories for public SycaSphere error payloads."""
 
-    VALIDATION = "VALIDATION"
+    VALIDATION_ERROR = "VALIDATION_ERROR"
     PLUGIN_MISSING = "PLUGIN_MISSING"
     PLUGIN_INCOMPATIBLE = "PLUGIN_INCOMPATIBLE"
     BACKEND_INITIALIZATION = "BACKEND_INITIALIZATION"
     EXTERNAL_DATA = "EXTERNAL_DATA"
     UNSUPPORTED_FRAME = "UNSUPPORTED_FRAME"
     UNSUPPORTED_MEASUREMENT = "UNSUPPORTED_MEASUREMENT"
+    UNAUTHORIZED_DATA_ACCESS = "UNAUTHORIZED_DATA_ACCESS"
+    OUT_OF_ORDER = "OUT_OF_ORDER"
     NUMERICAL_FAILURE = "NUMERICAL_FAILURE"
     RESOURCE_EXHAUSTED = "RESOURCE_EXHAUSTED"
     TIMEOUT = "TIMEOUT"
     CANCELLED = "CANCELLED"
-    INTERNAL = "INTERNAL"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
 # =============================👐Seperate👐==============================
