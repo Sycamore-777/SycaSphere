@@ -128,7 +128,7 @@ Run: `uv lock`
 
 Expected: `uv.lock` is generated and resolves only the declared workspace/build/dev graph.
 
-Run: `uv run --group dev --package sycasphere-core pytest packages/sycasphere-core/tests/test_package.py -q`
+Run: `uv run pytest packages/sycasphere-core/tests/test_package.py -q`
 
 Expected: PASS, 1 test.
 
@@ -184,7 +184,7 @@ Also assert that major/minor values cannot be negative and that model instances 
 
 - [ ] **Step 2: Run the schema tests and confirm missing-symbol failures**
 
-Run: `uv run --group dev --package sycasphere-core pytest packages/sycasphere-core/tests/test_schema.py -q`
+Run: `uv run pytest packages/sycasphere-core/tests/test_schema.py -q`
 
 Expected: FAIL because `SchemaVersion` does not exist.
 
@@ -222,7 +222,7 @@ Assert stable enum serialization and forbid arbitrary exception/traceback object
 
 - [ ] **Step 5: Run the error tests and confirm missing-symbol failures**
 
-Run: `uv run --group dev --package sycasphere-core pytest packages/sycasphere-core/tests/test_errors.py -q`
+Run: `uv run pytest packages/sycasphere-core/tests/test_errors.py -q`
 
 Expected: FAIL because the error contracts do not exist.
 
@@ -250,7 +250,7 @@ class ErrorCategory(StrEnum):
 
 - [ ] **Step 7: Export the contracts and run focused tests**
 
-Run: `uv run --group dev --package sycasphere-core pytest packages/sycasphere-core/tests/test_schema.py packages/sycasphere-core/tests/test_errors.py -q`
+Run: `uv run pytest packages/sycasphere-core/tests/test_schema.py packages/sycasphere-core/tests/test_errors.py -q`
 
 Expected: PASS.
 
@@ -297,7 +297,7 @@ Also test:
 
 - [ ] **Step 2: Run tests and confirm missing-symbol failures**
 
-Run: `uv run --group dev --package sycasphere-core pytest packages/sycasphere-core/tests/test_epoch.py -q`
+Run: `uv run pytest packages/sycasphere-core/tests/test_epoch.py -q`
 
 Expected: FAIL because `Epoch` and `TimeScale` do not exist.
 
@@ -329,7 +329,7 @@ Implement validation in small private pure functions:
 
 - [ ] **Step 4: Run focused tests and inspect JSON round trips**
 
-Run: `uv run --group dev --package sycasphere-core pytest packages/sycasphere-core/tests/test_epoch.py -q`
+Run: `uv run pytest packages/sycasphere-core/tests/test_epoch.py -q`
 
 Expected: PASS.
 
@@ -387,7 +387,7 @@ Test these invalid forms:
 
 - [ ] **Step 2: Run tests and confirm missing-symbol failures**
 
-Run: `uv run --group dev --package sycasphere-core pytest packages/sycasphere-core/tests/test_frames.py -q`
+Run: `uv run pytest packages/sycasphere-core/tests/test_frames.py -q`
 
 Expected: FAIL because frame contracts do not exist.
 
@@ -418,7 +418,7 @@ class ReferenceEllipsoid(StrEnum):
 
 - [ ] **Step 4: Run focused tests and schema assertions**
 
-Run: `uv run --group dev --package sycasphere-core pytest packages/sycasphere-core/tests/test_frames.py -q`
+Run: `uv run pytest packages/sycasphere-core/tests/test_frames.py -q`
 
 Expected: PASS.
 
@@ -464,7 +464,7 @@ Assert:
 
 - [ ] **Step 2: Run tests and confirm missing-symbol failures**
 
-Run: `uv run --group dev --package sycasphere-core pytest packages/sycasphere-core/tests/test_states.py -q`
+Run: `uv run pytest packages/sycasphere-core/tests/test_states.py -q`
 
 Expected: FAIL because `CartesianState` does not exist.
 
@@ -492,7 +492,7 @@ Define `FiniteComponent = Annotated[float, Strict(), AllowInfNan(False)]`. Pydan
 
 - [ ] **Step 4: Run focused tests and static checks**
 
-Run: `uv run --group dev --package sycasphere-core pytest packages/sycasphere-core/tests/test_states.py -q`
+Run: `uv run pytest packages/sycasphere-core/tests/test_states.py -q`
 
 Expected: PASS.
 
@@ -542,7 +542,7 @@ Test that duplicate/blank capabilities, malformed semantic versions, unknown ext
 
 - [ ] **Step 2: Run tests and confirm missing-symbol failures**
 
-Run: `uv run --group dev --package sycasphere-core pytest packages/sycasphere-core/tests/test_plugins.py -q`
+Run: `uv run pytest packages/sycasphere-core/tests/test_plugins.py -q`
 
 Expected: FAIL because plugin contracts do not exist.
 
@@ -588,7 +588,7 @@ Validate identifiers and implementation versions with narrowly scoped patterns. 
 
 - [ ] **Step 4: Run focused tests and prove Core imports without Java**
 
-Run: `uv run --group dev --package sycasphere-core pytest packages/sycasphere-core/tests/test_plugins.py -q`
+Run: `uv run pytest packages/sycasphere-core/tests/test_plugins.py -q`
 
 Expected: PASS.
 
@@ -663,7 +663,7 @@ Implement a pytest assertion that regenerates the object in memory and compares 
 
 - [ ] **Step 5: Run public API and schema tests**
 
-Run: `uv run --group dev --package sycasphere-core pytest packages/sycasphere-core/tests/test_public_api.py -q`
+Run: `uv run pytest packages/sycasphere-core/tests/test_public_api.py -q`
 
 Expected: PASS.
 
