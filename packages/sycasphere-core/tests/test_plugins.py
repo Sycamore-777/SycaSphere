@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-20
 最后修改  : 2026-07-20
-版本号    : v1.0.0
+版本号    : v1.0.1
 
 ■ 用途说明:
   验证后端中立插件标识、能力和资源声明契约。
@@ -18,8 +18,10 @@
 
 ■ 功能特性:
   ✓ 覆盖插件清单、能力、版本兼容性和边界验证。
+  ✓ 覆盖配置模式深度不可变性和输入别名隔离。
 
 ■ 更新日志:
+  v1.0.1 (2026-07-20): 覆盖配置模式冻结、标识语法和 ASCII SemVer。
   v1.0.0 (2026-07-20): 创建插件清单契约测试。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -37,6 +39,10 @@ from sycasphere.core import (
     SchemaVersion,
 )
 
+_ARABIC_INDIC_ONE = chr(0x0661)
+_ARABIC_INDIC_TWO = chr(0x0662)
+_ARABIC_INDIC_THREE = chr(0x0663)
+
 
 # =============================👐Seperate👐==============================
 # Plugin-manifest contract tests
@@ -53,6 +59,7 @@ def _complete_manifest() -> PluginManifest:
         configuration_schema={
             "type": "object",
             "properties": {"step_size_s": {"type": "number", "minimum": 0}},
+            "required": ["step_size_s"],
         },
         deterministic=True,
         resources=ResourceRequirements(requires_jdk=True, minimum_memory_mb=512),
@@ -71,6 +78,50 @@ def test_manifest_exposes_data_only_capability_contract() -> None:
     assert manifest.resources == ResourceRequirements(requires_jdk=True, minimum_memory_mb=512)
     assert manifest.supports("propagation.numerical")
     assert not manifest.supports("measurements.range")
+
+
+def test_manifest_deeply_freezes_configuration_schema() -> None:
+    manifest = _complete_manifest()
+
+    with pytest.raises(TypeError):
+        manifest.configuration_schema["type"] = "array"
+    with pytest.raises(TypeError):
+        manifest.configuration_schema["properties"]["step_size_s"]["minimum"] = 1
+    with pytest.raises(TypeError):
+        manifest.configuration_schema["required"][0] = "other"
+
+
+def test_manifest_isolated_from_configuration_schema_input_mutations() -> None:
+    configuration_schema = {
+        "type": "object",
+        "properties": {"step_size_s": {"type": "number", "minimum": 0}},
+        "required": ["step_size_s"],
+    }
+    manifest_data = _complete_manifest().model_dump(mode="python")
+    manifest_data["configuration_schema"] = configuration_schema
+    manifest = PluginManifest.model_validate(manifest_data)
+
+    configuration_schema["properties"]["step_size_s"]["minimum"] = 1
+    configuration_schema["required"].append("other")
+
+    assert manifest.configuration_schema["properties"]["step_size_s"]["minimum"] == 0
+    assert manifest.configuration_schema["required"] == ("step_size_s",)
+
+
+def test_manifest_configuration_schema_json_dump_and_round_trip() -> None:
+    manifest = _complete_manifest()
+
+    serialized = manifest.model_dump(mode="json")
+    restored = PluginManifest.model_validate(serialized)
+
+    assert serialized["configuration_schema"]["required"] == ["step_size_s"]
+    assert restored.model_dump(mode="json") == serialized
+
+
+def test_manifest_json_schema_describes_configuration_schema() -> None:
+    schema = PluginManifest.model_json_schema()
+
+    assert schema["properties"]["configuration_schema"]["type"] == "object"
 
 
 def test_manifest_uses_schema_version_for_interface_compatibility() -> None:
@@ -97,8 +148,9 @@ def test_plugin_kind_exposes_only_approved_first_version_kinds() -> None:
         [""],
         ["propagation. numerical"],
         ["Propagation.numerical"],
-        ["propagation"],
         ["propagation..numerical"],
+        ["propagation_"],
+        ["-propagation"],
     ],
 )
 def test_manifest_rejects_empty_duplicate_or_invalid_capabilities(
@@ -113,7 +165,7 @@ def test_manifest_rejects_empty_duplicate_or_invalid_capabilities(
 
 @pytest.mark.parametrize(
     "plugin_id",
-    ["", "sycasphere", "Sycasphere.orekit", "sycasphere.orekit ", "sycasphere..orekit"],
+    ["", "Sycasphere.orekit", "sycasphere.orekit ", "sycasphere..orekit", "sycasphere-"],
 )
 def test_plugin_ref_rejects_invalid_stable_plugin_ids(plugin_id: str) -> None:
     with pytest.raises(ValidationError):
@@ -125,8 +177,42 @@ def test_plugin_ref_rejects_invalid_stable_plugin_ids(plugin_id: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "identifier",
+    ["sycasphere", "sycasphere.orekit", "sycasphere_orekit", "sycasphere-orekit"],
+)
+def test_plugin_ref_accepts_single_and_explicitly_separated_identifiers(identifier: str) -> None:
+    ref = PluginRef(
+        plugin_id=identifier,
+        implementation_version="1.2.3",
+        interface_version=SchemaVersion(major=1, minor=0),
+    )
+
+    assert ref.plugin_id == identifier
+
+
+def test_manifest_accepts_single_capability_identifier() -> None:
+    manifest_data = _complete_manifest().model_dump(mode="python")
+    manifest_data["capabilities"] = ["propagation"]
+
+    manifest = PluginManifest.model_validate(manifest_data)
+
+    assert manifest.supports("propagation")
+
+
+@pytest.mark.parametrize(
     "implementation_version",
-    ["1.2", "v1.2.3", "01.2.3", "1.02.3", "1.2.03", "1.2.3-01", "1.2.3+"],
+    [
+        "1.2",
+        "v1.2.3",
+        "01.2.3",
+        "1.02.3",
+        "1.2.03",
+        "1.2.3-01",
+        "1.2.3+",
+        "1" + _ARABIC_INDIC_TWO + ".3",
+        "1.2" + _ARABIC_INDIC_THREE + ".3",
+        "1.2.3-rc." + _ARABIC_INDIC_ONE,
+    ],
 )
 def test_plugin_ref_rejects_non_semver_implementation_versions(
     implementation_version: str,

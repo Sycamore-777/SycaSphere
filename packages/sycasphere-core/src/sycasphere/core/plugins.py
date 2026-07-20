@@ -7,10 +7,10 @@
 创建者    : Sycamore
 创建日期  : 2026-07-20
 最后修改  : 2026-07-20
-版本号    : v1.0.0
+版本号    : v1.0.1
 
 ■ 用途说明:
-  定义后端中立、仅数据化的插件标识、能力和资源声明契约。
+  定义后端中立、仅数据化且深度不可变的插件标识、能力和资源声明契约。
 
 ■ 主要函数功能:
   - PluginManifest.supports: 查询声明的稳定能力标识。
@@ -18,9 +18,11 @@
 
 ■ 功能特性:
   ✓ 验证稳定插件标识、能力标识和 SemVer 2.0 实现版本。
+  ✓ 冻结配置模式嵌套映射和序列，防止输入别名修改。
   ✓ 不导入、加载或初始化任何插件实现。
 
 ■ 更新日志:
+  v1.0.1 (2026-07-20): 深度冻结配置模式并扩展稳定标识语法。
   v1.0.0 (2026-07-20): 创建插件身份和能力清单契约。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -29,7 +31,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any
 
 from pydantic import (
@@ -37,6 +41,7 @@ from pydantic import (
     ConfigDict,
     JsonValue,
     NonNegativeInt,
+    field_serializer,
     field_validator,
 )
 from sycasphere.core.schema import SchemaVersion
@@ -44,24 +49,47 @@ from sycasphere.core.schema import SchemaVersion
 # =============================👐Seperate👐==============================
 # Stable plugin-identifier validation
 # =============================👐Seperate👐==============================
-_SEGMENTED_IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$")
-_SEMVER_PRERELEASE_IDENTIFIER = r"(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)"
+_SEGMENTED_IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
+_SEMVER_PRERELEASE_IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
 _SEMVER_BUILD_IDENTIFIER = r"[0-9A-Za-z-]+"
 _SEMVER_PATTERN = re.compile(
-    rf"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+    rf"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
     rf"(?:-{_SEMVER_PRERELEASE_IDENTIFIER}(?:\.{_SEMVER_PRERELEASE_IDENTIFIER})*)?"
     rf"(?:\+{_SEMVER_BUILD_IDENTIFIER}(?:\.{_SEMVER_BUILD_IDENTIFIER})*)?$"
+)
+type FrozenJsonValue = (
+    bool | float | int | str | None | Mapping[str, FrozenJsonValue] | tuple[FrozenJsonValue, ...]
 )
 
 
 def _validate_segmented_identifier(value: str, field_name: str) -> str:
-    """Return a lowercase dot-separated stable identifier or raise ``ValueError``."""
+    """Return a lowercase ASCII identifier with optional explicit segment separators."""
     if not _SEGMENTED_IDENTIFIER_PATTERN.fullmatch(value):
         msg = (
-            f"{field_name} must contain lowercase ASCII segments separated by dots, "
-            "for example 'sycasphere.orekit'"
+            f"{field_name} must contain lowercase ASCII alphanumeric segments separated by "
+            "'.', '_', or '-', for example 'sycasphere.orekit'"
         )
         raise ValueError(msg)
+    return value
+
+
+def _freeze_json_value(value: JsonValue) -> FrozenJsonValue:
+    """Return a recursively immutable copy of a JSON-compatible value."""
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: _freeze_json_value(nested_value) for key, nested_value in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze_json_value(item) for item in value)
+    return value
+
+
+def _thaw_json_value(value: FrozenJsonValue) -> JsonValue:
+    """Return a JSON-compatible mutable representation for Pydantic serialization."""
+    if isinstance(value, Mapping):
+        return {key: _thaw_json_value(nested_value) for key, nested_value in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json_value(item) for item in value]
     return value
 
 
@@ -89,7 +117,7 @@ class PluginRef(BaseModel):
     @field_validator("plugin_id")
     @classmethod
     def validate_plugin_id(cls, value: str) -> str:
-        """Require a stable, lowercase, dot-separated plugin identifier."""
+        """Require a stable, lowercase ASCII plugin identifier."""
         return _validate_segmented_identifier(value, "plugin_id")
 
     @field_validator("implementation_version")
@@ -119,9 +147,26 @@ class PluginManifest(BaseModel):
     ref: PluginRef
     kind: PluginKind
     capabilities: frozenset[str]
-    configuration_schema: dict[str, JsonValue]
+    configuration_schema: Mapping[str, JsonValue]
     deterministic: bool
     resources: ResourceRequirements
+
+    @field_validator("configuration_schema")
+    @classmethod
+    def freeze_configuration_schema(
+        cls, value: Mapping[str, JsonValue]
+    ) -> Mapping[str, FrozenJsonValue]:
+        """Store an immutable, alias-independent configuration-schema snapshot."""
+        return MappingProxyType(
+            {key: _freeze_json_value(nested_value) for key, nested_value in value.items()}
+        )
+
+    @field_serializer("configuration_schema", when_used="always")
+    def serialize_configuration_schema(
+        self, value: Mapping[str, FrozenJsonValue]
+    ) -> dict[str, JsonValue]:
+        """Serialize the immutable snapshot as ordinary JSON objects and arrays."""
+        return {key: _thaw_json_value(nested_value) for key, nested_value in value.items()}
 
     @field_validator("capabilities", mode="before")
     @classmethod
