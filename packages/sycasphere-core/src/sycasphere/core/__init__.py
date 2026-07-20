@@ -32,6 +32,13 @@ from typing import Final
 
 from sycasphere.core.epoch import Epoch, TimeScale
 from sycasphere.core.errors import ErrorCategory, ErrorDetail
+from sycasphere.core.frames import (
+    CoordinateRepresentation,
+    EarthFixedFrameSpec,
+    FrameKind,
+    FrameRef,
+    ReferenceEllipsoid,
+)
 from sycasphere.core.schema import SchemaVersion
 
 # =============================👐Seperate👐==============================
@@ -40,9 +47,14 @@ from sycasphere.core.schema import SchemaVersion
 __version__: Final = "0.1.0"
 
 __all__ = [
+    "CoordinateRepresentation",
+    "EarthFixedFrameSpec",
     "Epoch",
     "ErrorCategory",
     "ErrorDetail",
+    "FrameKind",
+    "FrameRef",
+    "ReferenceEllipsoid",
     "SchemaVersion",
     "TimeScale",
     "__version__",
