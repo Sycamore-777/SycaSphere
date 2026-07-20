@@ -61,7 +61,7 @@ def _find_forbidden_imports(source_path: Path) -> dict[Path, set[str]]:
         for node in ast.walk(parsed):
             if isinstance(node, ast.Import):
                 roots.update(alias.name.split(".", maxsplit=1)[0] for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module is not None:
                 roots.add(node.module.split(".", maxsplit=1)[0])
 
         forbidden_roots = roots & FORBIDDEN_IMPORT_ROOTS
@@ -77,6 +77,22 @@ def test_scanner_rejects_forbidden_import_in_temporary_file(tmp_path: Path) -> N
     source_file.write_text("import jpype\n", encoding="utf-8")
 
     assert _find_forbidden_imports(source_file) == {source_file: {"jpype"}}
+
+
+def test_scanner_rejects_absolute_import_from_in_temporary_file(tmp_path: Path) -> None:
+    """The scanner must reject an absolute import from a forbidden external root."""
+    source_file = tmp_path / "absolute_import_from.py"
+    source_file.write_text("from jpype import JClass\n", encoding="utf-8")
+
+    assert _find_forbidden_imports(source_file) == {source_file: {"jpype"}}
+
+
+def test_scanner_ignores_relative_import_from_in_temporary_file(tmp_path: Path) -> None:
+    """The scanner must not mistake a relative Core module for an external dependency."""
+    source_file = tmp_path / "relative_import_from.py"
+    source_file.write_text("from .jpype import Adapter\n", encoding="utf-8")
+
+    assert _find_forbidden_imports(source_file) == {}
 
 
 def test_core_source_tree_has_no_forbidden_imports() -> None:
