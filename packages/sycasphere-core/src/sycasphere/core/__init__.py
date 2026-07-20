@@ -10,16 +10,18 @@
 版本号    : v1.0.0
 
 ■ 用途说明:
-  提供 SycaSphere Core 纯领域契约包的公共版本标识。
+  提供 SycaSphere Core 纯领域契约包的公共版本标识和基础契约。
 
-■ 主要功能:
+■ 主要函数功能:
   - __version__: 声明当前 Core 分发包的版本。
+  - SchemaVersion: 导出公共模式版本兼容性契约。
+  - ErrorCategory 和 ErrorDetail: 导出公共结构化错误契约。
 
 ■ 功能特性:
-  ✓ 提供稳定的包版本导入接口。
+  ✓ 提供稳定的公共导入接口。
 
 ■ 更新日志:
-  v1.0.0 (2026-07-20): 创建 Core 包公共模块。
+  v1.0.0 (2026-07-20): 导出模式版本和结构化错误契约。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
 """
@@ -28,7 +30,12 @@ from __future__ import annotations
 
 from typing import Final
 
-# =============================👐Seperate👐=============================
-# Public package metadata
-# =============================👐Seperate👐=============================
+from sycasphere.core.errors import ErrorCategory, ErrorDetail
+from sycasphere.core.schema import SchemaVersion
+
+# =============================👐Seperate👐==============================
+# Public package metadata and contracts
+# =============================👐Seperate👐==============================
 __version__: Final = "0.1.0"
+
+__all__ = ["ErrorCategory", "ErrorDetail", "SchemaVersion", "__version__"]
