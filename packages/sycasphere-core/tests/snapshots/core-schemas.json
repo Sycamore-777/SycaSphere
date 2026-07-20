@@ -1,0 +1,752 @@
+{
+  "CartesianState": {
+    "$defs": {
+      "CoordinateRepresentation": {
+        "description": "Coordinate representations supported by public frame references.",
+        "enum": [
+          "CARTESIAN",
+          "GEODETIC"
+        ],
+        "title": "CoordinateRepresentation",
+        "type": "string"
+      },
+      "EarthFixedFrameSpec": {
+        "additionalProperties": false,
+        "description": "Explicit provenance required to interpret an Earth-fixed coordinate frame.",
+        "properties": {
+          "eop_data_id": {
+            "minLength": 1,
+            "title": "Eop Data Id",
+            "type": "string"
+          },
+          "iers_conventions": {
+            "minLength": 1,
+            "title": "Iers Conventions",
+            "type": "string"
+          },
+          "itrf_realization": {
+            "minLength": 1,
+            "title": "Itrf Realization",
+            "type": "string"
+          }
+        },
+        "required": [
+          "itrf_realization",
+          "iers_conventions",
+          "eop_data_id"
+        ],
+        "title": "EarthFixedFrameSpec",
+        "type": "object"
+      },
+      "Epoch": {
+        "additionalProperties": false,
+        "description": "An immutable calendar instant whose time scale is always explicit.",
+        "properties": {
+          "scale": {
+            "$ref": "#/$defs/TimeScale"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "scale"
+        ],
+        "title": "Epoch",
+        "type": "object"
+      },
+      "FiniteComponent": {
+        "type": "number"
+      },
+      "FrameKind": {
+        "description": "Stable public frame semantics that a backend adapter may implement.",
+        "enum": [
+          "J2000",
+          "EARTH_FIXED",
+          "LVLH",
+          "VVLH",
+          "BODY",
+          "SENSOR"
+        ],
+        "title": "FrameKind",
+        "type": "string"
+      },
+      "FrameRef": {
+        "additionalProperties": false,
+        "description": "An immutable public frame reference without scientific-backend implementation types.",
+        "properties": {
+          "convention": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Convention"
+          },
+          "earth_fixed": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EarthFixedFrameSpec"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "ellipsoid": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ReferenceEllipsoid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "kind": {
+            "$ref": "#/$defs/FrameKind"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Owner Id"
+          },
+          "reference_epoch": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Epoch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "representation": {
+            "$ref": "#/$defs/CoordinateRepresentation",
+            "default": "CARTESIAN"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FrameRef",
+        "type": "object"
+      },
+      "ReferenceEllipsoid": {
+        "description": "Reference ellipsoids used only with compatible coordinate representations.",
+        "enum": [
+          "WGS84"
+        ],
+        "title": "ReferenceEllipsoid",
+        "type": "string"
+      },
+      "TimeScale": {
+        "description": "Supported labels for an Epoch's declared time scale.",
+        "enum": [
+          "UTC",
+          "TAI",
+          "TT"
+        ],
+        "title": "TimeScale",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "description": "An immutable three-dimensional position and velocity state in an explicit frame.",
+    "properties": {
+      "epoch": {
+        "$ref": "#/$defs/Epoch"
+      },
+      "frame": {
+        "$ref": "#/$defs/FrameRef"
+      },
+      "position_m": {
+        "maxItems": 3,
+        "minItems": 3,
+        "prefixItems": [
+          {
+            "$ref": "#/$defs/FiniteComponent"
+          },
+          {
+            "$ref": "#/$defs/FiniteComponent"
+          },
+          {
+            "$ref": "#/$defs/FiniteComponent"
+          }
+        ],
+        "title": "Position M",
+        "type": "array"
+      },
+      "velocity_mps": {
+        "maxItems": 3,
+        "minItems": 3,
+        "prefixItems": [
+          {
+            "$ref": "#/$defs/FiniteComponent"
+          },
+          {
+            "$ref": "#/$defs/FiniteComponent"
+          },
+          {
+            "$ref": "#/$defs/FiniteComponent"
+          }
+        ],
+        "title": "Velocity Mps",
+        "type": "array"
+      }
+    },
+    "required": [
+      "epoch",
+      "frame",
+      "position_m",
+      "velocity_mps"
+    ],
+    "title": "CartesianState",
+    "type": "object"
+  },
+  "EarthFixedFrameSpec": {
+    "additionalProperties": false,
+    "description": "Explicit provenance required to interpret an Earth-fixed coordinate frame.",
+    "properties": {
+      "eop_data_id": {
+        "minLength": 1,
+        "title": "Eop Data Id",
+        "type": "string"
+      },
+      "iers_conventions": {
+        "minLength": 1,
+        "title": "Iers Conventions",
+        "type": "string"
+      },
+      "itrf_realization": {
+        "minLength": 1,
+        "title": "Itrf Realization",
+        "type": "string"
+      }
+    },
+    "required": [
+      "itrf_realization",
+      "iers_conventions",
+      "eop_data_id"
+    ],
+    "title": "EarthFixedFrameSpec",
+    "type": "object"
+  },
+  "Epoch": {
+    "$defs": {
+      "TimeScale": {
+        "description": "Supported labels for an Epoch's declared time scale.",
+        "enum": [
+          "UTC",
+          "TAI",
+          "TT"
+        ],
+        "title": "TimeScale",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "description": "An immutable calendar instant whose time scale is always explicit.",
+    "properties": {
+      "scale": {
+        "$ref": "#/$defs/TimeScale"
+      },
+      "value": {
+        "title": "Value",
+        "type": "string"
+      }
+    },
+    "required": [
+      "value",
+      "scale"
+    ],
+    "title": "Epoch",
+    "type": "object"
+  },
+  "ErrorDetail": {
+    "$defs": {
+      "ErrorCategory": {
+        "description": "Stable categories for public SycaSphere error payloads.",
+        "enum": [
+          "VALIDATION_ERROR",
+          "PLUGIN_MISSING",
+          "PLUGIN_INCOMPATIBLE",
+          "BACKEND_INITIALIZATION",
+          "EXTERNAL_DATA",
+          "UNSUPPORTED_FRAME",
+          "UNSUPPORTED_MEASUREMENT",
+          "UNAUTHORIZED_DATA_ACCESS",
+          "OUT_OF_ORDER",
+          "NUMERICAL_FAILURE",
+          "RESOURCE_EXHAUSTED",
+          "TIMEOUT",
+          "CANCELLED",
+          "INTERNAL_ERROR"
+        ],
+        "title": "ErrorCategory",
+        "type": "string"
+      },
+      "JsonValue": {}
+    },
+    "additionalProperties": false,
+    "description": "An immutable, JSON-safe payload for errors crossing public boundaries.",
+    "properties": {
+      "category": {
+        "$ref": "#/$defs/ErrorCategory"
+      },
+      "code": {
+        "title": "Code",
+        "type": "string"
+      },
+      "component_ref": {
+        "title": "Component Ref",
+        "type": "string"
+      },
+      "context": {
+        "additionalProperties": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "title": "Context",
+        "type": "object"
+      },
+      "message": {
+        "title": "Message",
+        "type": "string"
+      },
+      "retryable": {
+        "title": "Retryable",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "category",
+      "code",
+      "message",
+      "retryable",
+      "component_ref",
+      "context"
+    ],
+    "title": "ErrorDetail",
+    "type": "object"
+  },
+  "FrameRef": {
+    "$defs": {
+      "CoordinateRepresentation": {
+        "description": "Coordinate representations supported by public frame references.",
+        "enum": [
+          "CARTESIAN",
+          "GEODETIC"
+        ],
+        "title": "CoordinateRepresentation",
+        "type": "string"
+      },
+      "EarthFixedFrameSpec": {
+        "additionalProperties": false,
+        "description": "Explicit provenance required to interpret an Earth-fixed coordinate frame.",
+        "properties": {
+          "eop_data_id": {
+            "minLength": 1,
+            "title": "Eop Data Id",
+            "type": "string"
+          },
+          "iers_conventions": {
+            "minLength": 1,
+            "title": "Iers Conventions",
+            "type": "string"
+          },
+          "itrf_realization": {
+            "minLength": 1,
+            "title": "Itrf Realization",
+            "type": "string"
+          }
+        },
+        "required": [
+          "itrf_realization",
+          "iers_conventions",
+          "eop_data_id"
+        ],
+        "title": "EarthFixedFrameSpec",
+        "type": "object"
+      },
+      "Epoch": {
+        "additionalProperties": false,
+        "description": "An immutable calendar instant whose time scale is always explicit.",
+        "properties": {
+          "scale": {
+            "$ref": "#/$defs/TimeScale"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "scale"
+        ],
+        "title": "Epoch",
+        "type": "object"
+      },
+      "FrameKind": {
+        "description": "Stable public frame semantics that a backend adapter may implement.",
+        "enum": [
+          "J2000",
+          "EARTH_FIXED",
+          "LVLH",
+          "VVLH",
+          "BODY",
+          "SENSOR"
+        ],
+        "title": "FrameKind",
+        "type": "string"
+      },
+      "ReferenceEllipsoid": {
+        "description": "Reference ellipsoids used only with compatible coordinate representations.",
+        "enum": [
+          "WGS84"
+        ],
+        "title": "ReferenceEllipsoid",
+        "type": "string"
+      },
+      "TimeScale": {
+        "description": "Supported labels for an Epoch's declared time scale.",
+        "enum": [
+          "UTC",
+          "TAI",
+          "TT"
+        ],
+        "title": "TimeScale",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "description": "An immutable public frame reference without scientific-backend implementation types.",
+    "properties": {
+      "convention": {
+        "anyOf": [
+          {
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Convention"
+      },
+      "earth_fixed": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/EarthFixedFrameSpec"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "ellipsoid": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ReferenceEllipsoid"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "kind": {
+        "$ref": "#/$defs/FrameKind"
+      },
+      "owner_id": {
+        "anyOf": [
+          {
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Owner Id"
+      },
+      "reference_epoch": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Epoch"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "representation": {
+        "$ref": "#/$defs/CoordinateRepresentation",
+        "default": "CARTESIAN"
+      }
+    },
+    "required": [
+      "kind"
+    ],
+    "title": "FrameRef",
+    "type": "object"
+  },
+  "PluginManifest": {
+    "$defs": {
+      "JsonValue": {},
+      "PluginKind": {
+        "description": "First-version plugin kinds the engine may select by declared capability.",
+        "enum": [
+          "SCIENCE_BACKEND",
+          "MEASUREMENT_MODEL",
+          "ERROR_MODEL",
+          "LINK_MODEL"
+        ],
+        "title": "PluginKind",
+        "type": "string"
+      },
+      "PluginRef": {
+        "additionalProperties": false,
+        "description": "Immutable identity and public interface version for a plugin implementation.",
+        "properties": {
+          "implementation_version": {
+            "title": "Implementation Version",
+            "type": "string"
+          },
+          "interface_version": {
+            "$ref": "#/$defs/SchemaVersion"
+          },
+          "plugin_id": {
+            "title": "Plugin Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plugin_id",
+          "implementation_version",
+          "interface_version"
+        ],
+        "title": "PluginRef",
+        "type": "object"
+      },
+      "ResourceRequirements": {
+        "additionalProperties": false,
+        "description": "Resource requirements inspectable without importing a plugin implementation.",
+        "properties": {
+          "minimum_memory_mb": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Minimum Memory Mb"
+          },
+          "requires_jdk": {
+            "default": false,
+            "title": "Requires Jdk",
+            "type": "boolean"
+          },
+          "requires_network": {
+            "default": false,
+            "title": "Requires Network",
+            "type": "boolean"
+          }
+        },
+        "title": "ResourceRequirements",
+        "type": "object"
+      },
+      "SchemaVersion": {
+        "additionalProperties": false,
+        "description": "An immutable public schema version with forward-compatible minors.",
+        "properties": {
+          "major": {
+            "minimum": 0,
+            "title": "Major",
+            "type": "integer"
+          },
+          "minor": {
+            "minimum": 0,
+            "title": "Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "major",
+          "minor"
+        ],
+        "title": "SchemaVersion",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "description": "Immutable, data-only declaration used to select compatible plugin capabilities.",
+    "properties": {
+      "capabilities": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Capabilities",
+        "type": "array",
+        "uniqueItems": true
+      },
+      "configuration_schema": {
+        "additionalProperties": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "title": "Configuration Schema",
+        "type": "object"
+      },
+      "deterministic": {
+        "title": "Deterministic",
+        "type": "boolean"
+      },
+      "kind": {
+        "$ref": "#/$defs/PluginKind"
+      },
+      "ref": {
+        "$ref": "#/$defs/PluginRef"
+      },
+      "resources": {
+        "$ref": "#/$defs/ResourceRequirements"
+      }
+    },
+    "required": [
+      "ref",
+      "kind",
+      "capabilities",
+      "configuration_schema",
+      "deterministic",
+      "resources"
+    ],
+    "title": "PluginManifest",
+    "type": "object"
+  },
+  "PluginRef": {
+    "$defs": {
+      "SchemaVersion": {
+        "additionalProperties": false,
+        "description": "An immutable public schema version with forward-compatible minors.",
+        "properties": {
+          "major": {
+            "minimum": 0,
+            "title": "Major",
+            "type": "integer"
+          },
+          "minor": {
+            "minimum": 0,
+            "title": "Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "major",
+          "minor"
+        ],
+        "title": "SchemaVersion",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "description": "Immutable identity and public interface version for a plugin implementation.",
+    "properties": {
+      "implementation_version": {
+        "title": "Implementation Version",
+        "type": "string"
+      },
+      "interface_version": {
+        "$ref": "#/$defs/SchemaVersion"
+      },
+      "plugin_id": {
+        "title": "Plugin Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "plugin_id",
+      "implementation_version",
+      "interface_version"
+    ],
+    "title": "PluginRef",
+    "type": "object"
+  },
+  "ResourceRequirements": {
+    "additionalProperties": false,
+    "description": "Resource requirements inspectable without importing a plugin implementation.",
+    "properties": {
+      "minimum_memory_mb": {
+        "anyOf": [
+          {
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Minimum Memory Mb"
+      },
+      "requires_jdk": {
+        "default": false,
+        "title": "Requires Jdk",
+        "type": "boolean"
+      },
+      "requires_network": {
+        "default": false,
+        "title": "Requires Network",
+        "type": "boolean"
+      }
+    },
+    "title": "ResourceRequirements",
+    "type": "object"
+  },
+  "SchemaVersion": {
+    "additionalProperties": false,
+    "description": "An immutable public schema version with forward-compatible minors.",
+    "properties": {
+      "major": {
+        "minimum": 0,
+        "title": "Major",
+        "type": "integer"
+      },
+      "minor": {
+        "minimum": 0,
+        "title": "Minor",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "major",
+      "minor"
+    ],
+    "title": "SchemaVersion",
+    "type": "object"
+  }
+}

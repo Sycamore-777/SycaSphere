@@ -65,5 +65,4 @@ __all__ = [
     "ResourceRequirements",
     "SchemaVersion",
     "TimeScale",
-    "__version__",
 ]
