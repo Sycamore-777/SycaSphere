@@ -33,7 +33,16 @@ import math
 import numpy as np
 import pytest
 from pydantic import ValidationError
-from sycasphere.core import CartesianState, Epoch, FrameKind, FrameRef, TimeScale
+from sycasphere.core import (
+    CartesianState,
+    CoordinateRepresentation,
+    EarthFixedFrameSpec,
+    Epoch,
+    FrameKind,
+    FrameRef,
+    ReferenceEllipsoid,
+    TimeScale,
+)
 
 # =============================👐Seperate👐=============================
 # Cartesian state contract tests
@@ -78,6 +87,27 @@ def test_state_vectors_reject_string_coercion() -> None:
 
     with pytest.raises(ValidationError):
         CartesianState(**state_data)
+
+
+def test_state_rejects_geodetic_frame_representation() -> None:
+    frame = FrameRef(
+        kind=FrameKind.EARTH_FIXED,
+        representation=CoordinateRepresentation.GEODETIC,
+        ellipsoid=ReferenceEllipsoid.WGS84,
+        earth_fixed=EarthFixedFrameSpec(
+            itrf_realization="ITRF2020",
+            iers_conventions="IERS_2010",
+            eop_data_id="iers-bulletin-a:2026-07-20",
+        ),
+    )
+
+    with pytest.raises(ValidationError):
+        CartesianState(
+            epoch=_EPOCH,
+            frame=frame,
+            position_m=[7_000_000.0, 0.0, 0.0],
+            velocity_mps=[0.0, 7_500.0, 0.0],
+        )
 
 
 def test_state_serializes_si_unit_fields_as_json_arrays() -> None:

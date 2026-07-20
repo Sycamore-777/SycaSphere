@@ -32,9 +32,9 @@ from typing import Annotated
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import AllowInfNan, BaseModel, ConfigDict, Strict
+from pydantic import AllowInfNan, BaseModel, ConfigDict, Strict, model_validator
 from sycasphere.core.epoch import Epoch
-from sycasphere.core.frames import FrameRef
+from sycasphere.core.frames import CoordinateRepresentation, FrameRef
 
 # =============================👐Seperate👐=============================
 # Strict finite Cartesian-vector components
@@ -54,6 +54,13 @@ class CartesianState(BaseModel):
     frame: FrameRef
     position_m: tuple[FiniteComponent, FiniteComponent, FiniteComponent]
     velocity_mps: tuple[FiniteComponent, FiniteComponent, FiniteComponent]
+
+    @model_validator(mode="after")
+    def _validate_cartesian_frame_representation(self) -> CartesianState:
+        """Require a Cartesian coordinate representation for Cartesian state components."""
+        if self.frame.representation is not CoordinateRepresentation.CARTESIAN:
+            raise ValueError("CartesianState requires a CARTESIAN frame representation")
+        return self
 
     def position_array(self) -> NDArray[np.float64]:
         """Return an independent float64 position vector for numerical calculations."""
