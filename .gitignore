@@ -13,3 +13,6 @@ __pycache__/
 build/
 dist/
 .build/
+
+# Local desktop/browser diagnostics
+debug.log
