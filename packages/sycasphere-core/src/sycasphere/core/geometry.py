@@ -61,10 +61,12 @@ def _as_vector(value: Vector3) -> np.ndarray:
     return np.asarray(value, dtype=np.float64)
 
 
-def _reject_integer_components(value: Any) -> Any:
-    """Reject integers before Pydantic's strict-float validation accepts them."""
-    if isinstance(value, (list, tuple)) and any(isinstance(component, int) for component in value):
-        raise ValueError("geometry components must be floats, not integers")
+def _validate_component_container(value: Any) -> Any:
+    """Require JSON-array containers with explicit built-in float components."""
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("geometry components must be supplied as a list or tuple")
+    if any(type(component) is not float for component in value):
+        raise ValueError("geometry components must be built-in floats")
     return value
 
 
@@ -81,9 +83,9 @@ class RigidTransform(BaseModel):
 
     @field_validator("translation_m", "rotation_parent_to_child_wxyz", mode="before")
     @classmethod
-    def reject_integer_components(cls, value: Any) -> Any:
-        """Reject implicit integer-to-float coercion at the model boundary."""
-        return _reject_integer_components(value)
+    def validate_component_container(cls, value: Any) -> Any:
+        """Require JSON-array containers with explicit float components."""
+        return _validate_component_container(value)
 
     @model_validator(mode="after")
     def validate_unit_quaternion(self) -> RigidTransform:
@@ -107,9 +109,9 @@ class SensorAxes(BaseModel):
 
     @field_validator("boresight", "horizontal", "vertical", mode="before")
     @classmethod
-    def reject_integer_components(cls, value: Any) -> Any:
-        """Reject implicit integer-to-float coercion at the model boundary."""
-        return _reject_integer_components(value)
+    def validate_component_container(cls, value: Any) -> Any:
+        """Require JSON-array containers with explicit float components."""
+        return _validate_component_container(value)
 
     @model_validator(mode="after")
     def validate_right_handed_orthonormal_axes(self) -> SensorAxes:

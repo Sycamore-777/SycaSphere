@@ -32,7 +32,9 @@
 from __future__ import annotations
 
 import math
+from collections import deque
 
+import numpy as np
 import pytest
 from pydantic import ValidationError
 from sycasphere.core.geometry import RigidTransform, SensorAxes
@@ -54,6 +56,23 @@ def _right_handed_axes() -> SensorAxes:
         horizontal=[1.0, 0.0, 0.0],
         vertical=[0.0, 1.0, 0.0],
     )
+
+
+def _axes_data_for_boresight(boresight: object) -> dict[str, object]:
+    """Create a right-handed basis for the exact iterable used as boresight."""
+    boresight_array = np.asarray(tuple(boresight), dtype=np.float64)
+    reference = np.array([1.0, 0.0, 0.0])
+    if math.isclose(abs(float(boresight_array[0])), 1.0, abs_tol=1e-9):
+        reference = np.array([0.0, 1.0, 0.0])
+
+    horizontal = np.cross(reference, boresight_array)
+    horizontal /= np.linalg.norm(horizontal)
+    vertical = np.cross(boresight_array, horizontal)
+    return {
+        "boresight": boresight,
+        "horizontal": tuple(horizontal),
+        "vertical": tuple(vertical),
+    }
 
 
 def test_rigid_transform_uses_explicit_parent_to_child_wxyz_contract() -> None:
@@ -127,6 +146,34 @@ def test_rigid_transform_rejects_invalid_translation(translation: list[object]) 
         )
 
 
+@pytest.mark.parametrize(
+    "container",
+    [
+        deque([1.0, 2.0, 3.0]),
+        {1.0, 2.0, 3.0},
+        np.array([1.0, 2.0, 3.0]),
+    ],
+)
+def test_rigid_transform_rejects_non_json_component_containers(container: object) -> None:
+    with pytest.raises(ValidationError):
+        RigidTransform(
+            translation_m=container,
+            rotation_parent_to_child_wxyz=[1.0, 0.0, 0.0, 0.0],
+        )
+
+
+@pytest.mark.parametrize("container_type", [list, tuple])
+def test_rigid_transform_accepts_list_and_tuple_float_components(
+    container_type: type[list[float]] | type[tuple[float, ...]],
+) -> None:
+    transform = RigidTransform(
+        translation_m=container_type([1.0, 2.0, 3.0]),
+        rotation_parent_to_child_wxyz=container_type([1.0, 0.0, 0.0, 0.0]),
+    )
+
+    assert transform.translation_m == (1.0, 2.0, 3.0)
+
+
 def test_sensor_axes_accept_explicit_right_handed_non_default_boresight() -> None:
     axes = _right_handed_axes()
 
@@ -168,6 +215,32 @@ def test_sensor_axes_reject_non_unit_non_orthogonal_or_left_handed_axes(
 
     with pytest.raises(ValidationError):
         SensorAxes.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    "boresight",
+    [
+        deque([0.0, 0.0, 1.0]),
+        {0.0, 0.6, 0.8},
+        np.array([0.0, 0.0, 1.0]),
+    ],
+)
+def test_sensor_axes_reject_non_json_component_containers(boresight: object) -> None:
+    with pytest.raises(ValidationError):
+        SensorAxes.model_validate(_axes_data_for_boresight(boresight))
+
+
+@pytest.mark.parametrize("container_type", [list, tuple])
+def test_sensor_axes_accept_list_and_tuple_float_components(
+    container_type: type[list[float]] | type[tuple[float, ...]],
+) -> None:
+    axes = SensorAxes(
+        boresight=container_type([0.0, 0.0, 1.0]),
+        horizontal=container_type([1.0, 0.0, 0.0]),
+        vertical=container_type([0.0, 1.0, 0.0]),
+    )
+
+    assert axes.boresight == (0.0, 0.0, 1.0)
 
 
 def test_geometry_models_are_frozen() -> None:
