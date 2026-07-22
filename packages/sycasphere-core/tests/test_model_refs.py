@@ -70,6 +70,15 @@ def test_model_ref_rejects_blank_ids(model_id: str) -> None:
         )
 
 
+def test_model_ref_rejects_bytes_ids() -> None:
+    with pytest.raises(ValidationError):
+        ModelRef(
+            model_id=b"sycasphere.pointing.fixed",
+            interface_version=SchemaVersion(major=1, minor=0),
+            configuration={},
+        )
+
+
 def test_model_ref_deeply_freezes_and_isolates_configuration() -> None:
     configuration = {"nested": {"thresholds": [1.0, 2.0]}}
     ref = ModelRef(

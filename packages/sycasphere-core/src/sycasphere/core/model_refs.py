@@ -52,7 +52,7 @@ from sycasphere.core.schema import SchemaVersion
 
 type StableModelId = Annotated[
     str,
-    StringConstraints(strip_whitespace=True, min_length=1),
+    StringConstraints(strict=True, strip_whitespace=True, min_length=1),
 ]
 
 
