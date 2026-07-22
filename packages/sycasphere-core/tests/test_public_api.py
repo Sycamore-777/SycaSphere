@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 import sycasphere.core as core
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 # =============================👐Seperate👐=============================
 # Public Core contract tests
@@ -42,17 +42,29 @@ EXPECTED_PUBLIC_CONTRACTS = {
     "CartesianState",
     "CoordinateRepresentation",
     "EarthFixedFrameSpec",
+    "EntityDefinition",
+    "EntityType",
     "Epoch",
     "ErrorCategory",
     "ErrorDetail",
     "FrameKind",
     "FrameRef",
+    "GeodeticLocation",
+    "GroundStationDefinition",
+    "ModelRef",
+    "OtherSpaceObjectDefinition",
     "PluginKind",
     "PluginManifest",
     "PluginRef",
     "ReferenceEllipsoid",
     "ResourceRequirements",
+    "RigidTransform",
     "SchemaVersion",
+    "SensorAxes",
+    "SensorDefinition",
+    "SensorType",
+    "SpaceObjectPhysicalProperties",
+    "SpacecraftDefinition",
     "TimeScale",
 }
 
@@ -74,8 +86,19 @@ def _public_model_schemas() -> dict[str, dict[str, Any]]:
         core.PluginRef,
         core.ResourceRequirements,
         core.PluginManifest,
+        core.ModelRef,
+        core.RigidTransform,
+        core.SensorAxes,
+        core.GeodeticLocation,
+        core.SensorDefinition,
+        core.SpaceObjectPhysicalProperties,
+        core.SpacecraftDefinition,
+        core.OtherSpaceObjectDefinition,
+        core.GroundStationDefinition,
     )
-    return {model.__name__: model.model_json_schema() for model in models}
+    schemas = {model.__name__: model.model_json_schema() for model in models}
+    schemas["EntityDefinition"] = TypeAdapter(core.EntityDefinition).json_schema()
+    return schemas
 
 
 def _serialized_public_model_schemas() -> str:

@@ -57,6 +57,113 @@ The models are frozen and reject extra fields. Cartesian vectors must contain
 exactly three finite floating-point values. `J2000` is the stable public
 inertial-frame semantic; `WGS84` is a reference ellipsoid, not a frame.
 
+## Entity and sensor definitions
+
+The following examples validate definitions only; they do not propagate an
+orbit or generate observations.
+
+```python
+from sycasphere.core import (
+    CartesianState,
+    CoordinateRepresentation,
+    EarthFixedFrameSpec,
+    Epoch,
+    FrameKind,
+    FrameRef,
+    GeodeticLocation,
+    GroundStationDefinition,
+    ModelRef,
+    ReferenceEllipsoid,
+    RigidTransform,
+    SchemaVersion,
+    SensorAxes,
+    SensorDefinition,
+    SensorType,
+    SpaceObjectPhysicalProperties,
+    SpacecraftDefinition,
+    TimeScale,
+)
+
+interface_v1 = SchemaVersion(major=1, minor=0)
+
+
+def model(model_id: str) -> ModelRef:
+    return ModelRef(model_id=model_id, interface_version=interface_v1)
+
+
+def optical_sensor(sensor_id: str) -> SensorDefinition:
+    return SensorDefinition(
+        id=sensor_id,
+        name="Optical Sensor",
+        revision=1,
+        schema_version=interface_v1,
+        sensor_type=SensorType.OPTICAL,
+        mount_transform=RigidTransform(
+            translation_m=(0.5, 0.0, 0.0),
+            rotation_parent_to_child_wxyz=(1.0, 0.0, 0.0, 0.0),
+        ),
+        axes=SensorAxes(
+            boresight=(1.0, 0.0, 0.0),
+            horizontal=(0.0, 1.0, 0.0),
+            vertical=(0.0, 0.0, 1.0),
+        ),
+        pointing_model=model("sycasphere.pointing.fixed"),
+        field_of_view_model=model("sycasphere.fov.conical"),
+        visibility_model=model("sycasphere.visibility.basic"),
+        measurement_models=(model("sycasphere.measurement.angles_ra_dec"),),
+    )
+
+
+spacecraft = SpacecraftDefinition(
+    id="observer-spacecraft-1",
+    name="Observer",
+    revision=1,
+    schema_version=interface_v1,
+    capabilities=("sensor_host",),
+    initial_state=CartesianState(
+        epoch=Epoch(value="2026-07-21T00:00:00Z", time_scale=TimeScale.UTC),
+        frame=FrameRef(kind=FrameKind.J2000),
+        position_m=(7_000_000.0, 0.0, 0.0),
+        velocity_mps=(0.0, 7_500.0, 0.0),
+    ),
+    physical_properties=SpaceObjectPhysicalProperties(
+        mass_kg=1_000.0,
+        cross_section_area_m2=12.0,
+        drag_coefficient=2.2,
+        solar_radiation_pressure_coefficient=1.3,
+    ),
+    dynamics_model=model("sycasphere.dynamics.numerical"),
+    attitude_model=model("sycasphere.attitude.nadir"),
+    sensors=(optical_sensor("space-optical-1"),),
+)
+
+earth_fixed = FrameRef(
+    kind=FrameKind.EARTH_FIXED,
+    representation=CoordinateRepresentation.GEODETIC,
+    earth_fixed=EarthFixedFrameSpec(
+        itrf_realization="ITRF2020",
+        iers_conventions="IERS_2010",
+        eop_data_id="iers-bulletin-a:2026-07-21",
+    ),
+    ellipsoid=ReferenceEllipsoid.WGS84,
+)
+ground_station = GroundStationDefinition(
+    id="ground-station-1",
+    name="Ground Station",
+    revision=1,
+    schema_version=interface_v1,
+    capabilities=("sensor_host",),
+    location=GeodeticLocation(
+        frame=earth_fixed,
+        longitude_rad=2.0,
+        latitude_rad=0.5,
+        ellipsoid_height_m=50.0,
+    ),
+    body_axes_convention="NED_RH",
+    sensors=(optical_sensor("ground-optical-1"),),
+)
+```
+
 ## Time and backend boundary
 
 Core validates and canonicalizes representations but performs no UTC/TAI/TT
@@ -89,7 +196,8 @@ plugin implementation.
 
 ## Phase 1 exclusions
 
-Core Phase 1 does not include observations, run requests, engine sessions,
-propagation, persistence, an API, or a UI. Truth generation, observation
-delivery, estimation, maneuver execution, scientific backend adapters, and
-application orchestration belong to later phases.
+Even with entity and sensor definitions, Core Phase 1 explicitly excludes
+observations, run requests, engine sessions, propagation, persistence, an API,
+and a UI. Truth generation, observation delivery, estimation, maneuver
+execution, scientific backend adapters, and application orchestration belong
+to later phases.
