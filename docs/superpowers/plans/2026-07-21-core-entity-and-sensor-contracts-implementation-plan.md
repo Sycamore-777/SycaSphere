@@ -18,6 +18,7 @@
 - 四元数顺序唯一为 `w, x, y, z`，字段名为 `rotation_parent_to_child_wxyz`；不得增加 `xyzw` 别名或自动猜测。
 - 单位向量、正交、右手关系和单位四元数使用绝对容差 `1e-9`，不得静默归一化。
 - metadata 和 configuration 必须复用 `_json.py`，做到有限、深度不可变、输入别名隔离和普通 JSON 序列化。
+- 定义对象共享字段和 metadata 验证必须集中在私有 `_definitions.py`；该模块不得加入 `sycasphere.core.__all__`。
 - 传感器不得包含独立轨道或状态；实体不得包含固定任务角色。
 - 本计划不实现 SimulationDefinition、机动、观测、传播、姿态计算、可见性计算、存储、API、CLI 或前端。
 - 每个行为先写失败测试并确认失败原因，再写最小实现；每个任务完成后单独提交。
@@ -27,6 +28,7 @@
 
 ```text
 packages/sycasphere-core/src/sycasphere/core/
+├── _definitions.py # 私有共享定义字段、标签与 metadata 冻结
 ├── model_refs.py  # ModelRef 与深度不可变配置
 ├── geometry.py    # RigidTransform、SensorAxes、GeodeticLocation
 ├── sensors.py     # SensorType 与 SensorDefinition
@@ -881,13 +883,14 @@ git commit -m "feat(core): add WGS84 geodetic locations"
 
 **Files:**
 
+- Create: `packages/sycasphere-core/src/sycasphere/core/_definitions.py`
 - Create: `packages/sycasphere-core/src/sycasphere/core/sensors.py`
 - Create: `packages/sycasphere-core/tests/test_sensors.py`
 
 **Interfaces:**
 
 - Consumes: `ModelRef`, `RigidTransform`, `SensorAxes`, `SchemaVersion`, shared immutable JSON helpers.
-- Produces: `SensorType` and `SensorDefinition` for nested entity composition.
+- Produces: private `_DefinitionBase` for shared definition metadata, plus public `SensorType` and `SensorDefinition` for nested entity composition.
 
 - [ ] **Step 1: Write failing SensorDefinition tests**
 
@@ -1115,6 +1118,123 @@ Expected: FAIL during collection with `ModuleNotFoundError: No module named 'syc
 
 - [ ] **Step 3: Implement SensorDefinition**
 
+Create `packages/sycasphere-core/src/sycasphere/core/_definitions.py`:
+
+```python
+# -*- coding: utf-8 -*-
+# Copyright 2026 Sycamore
+# SPDX-License-Identifier: Apache-2.0
+# %%
+"""
+文件名    : _definitions.py
+创建者    : Sycamore
+创建日期  : 2026-07-22
+最后修改  : 2026-07-22
+版本号    : v1.0.0
+
+■ 用途说明:
+  为 Core 内部定义对象集中提供身份、修订、标签和不可变 metadata 验证。
+
+■ 主要函数功能:
+  - _normalize_unique_strings: 规范化非空、唯一字符串集合。
+  - _DefinitionBase: 保存定义对象共享字段并深度冻结 metadata。
+
+■ 功能特性:
+  ✓ 修订号使用严格正整数。
+  ✓ 默认和显式 metadata 均深度冻结且稳定序列化。
+
+■ 待办事项:
+  - 无
+
+■ 更新日志:
+  v1.0.0 (2026-07-22): 创建 Core 私有共享定义验证。
+
+"心之所向，素履以往；生如逆旅，一苇以航。"
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Annotated, Any
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    Strict,
+    StringConstraints,
+    field_serializer,
+    field_validator,
+)
+from sycasphere.core._json import (
+    FrozenJsonValue,
+    freeze_json_object,
+    normalize_json_object,
+    thaw_json_value,
+)
+from sycasphere.core.schema import SchemaVersion
+
+type DefinitionString = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1),
+]
+type Revision = Annotated[int, Strict(), Field(gt=0)]
+
+
+def _normalize_unique_strings(value: Any, field_name: str) -> tuple[str, ...]:
+    """Return stripped unique non-blank strings from a collection input."""
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        raise ValueError(f"{field_name} must be a collection of strings")
+    if not all(isinstance(item, str) for item in value):
+        raise ValueError(f"{field_name} must contain only strings")
+    normalized = tuple(item.strip() for item in value)
+    if any(not item for item in normalized):
+        raise ValueError(f"{field_name} must not contain blank values")
+    if len(normalized) != len(set(normalized)):
+        raise ValueError(f"{field_name} must not contain duplicates")
+    return normalized
+
+
+# =============================👐Seperate👐==============================
+# Private immutable definition base
+# =============================👐Seperate👐==============================
+class _DefinitionBase(BaseModel):
+    """Shared immutable fields for versioned Core definition objects."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
+
+    id: DefinitionString
+    name: DefinitionString
+    revision: Revision
+    schema_version: SchemaVersion
+    tags: frozenset[str] = Field(default_factory=frozenset)
+    metadata: Mapping[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def normalize_tags(cls, value: Any) -> tuple[str, ...]:
+        return _normalize_unique_strings(value, "tags")
+
+    @field_serializer("tags", when_used="always")
+    def serialize_tags(self, value: frozenset[str]) -> list[str]:
+        return sorted(value)
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def normalize_metadata(cls, value: Any) -> dict[str, JsonValue]:
+        return normalize_json_object(value)
+
+    @field_validator("metadata")
+    @classmethod
+    def freeze_metadata(cls, value: Mapping[str, JsonValue]) -> Mapping[str, FrozenJsonValue]:
+        return freeze_json_object(value)
+
+    @field_serializer("metadata", when_used="always")
+    def serialize_metadata(self, value: Mapping[str, FrozenJsonValue]) -> dict[str, JsonValue]:
+        return {key: thaw_json_value(nested) for key, nested in value.items()}
+```
+
 Create `packages/sycasphere-core/src/sycasphere/core/sensors.py`:
 
 ```python
@@ -1151,49 +1271,12 @@ Create `packages/sycasphere-core/src/sycasphere/core/sensors.py`:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from enum import StrEnum
-from typing import Annotated, Any
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    JsonValue,
-    Strict,
-    StringConstraints,
-    field_serializer,
-    field_validator,
-)
-from sycasphere.core._json import (
-    FrozenJsonValue,
-    freeze_json_object,
-    normalize_json_object,
-    thaw_json_value,
-)
+from pydantic import field_validator
+from sycasphere.core._definitions import _DefinitionBase
 from sycasphere.core.geometry import RigidTransform, SensorAxes
 from sycasphere.core.model_refs import ModelRef
-from sycasphere.core.schema import SchemaVersion
-
-type DefinitionString = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1),
-]
-type Revision = Annotated[int, Strict(), Field(gt=0)]
-
-
-def _normalize_unique_strings(value: Any, field_name: str) -> tuple[str, ...]:
-    """Return stripped unique non-blank strings from a collection input."""
-    if not isinstance(value, (list, tuple, set, frozenset)):
-        raise ValueError(f"{field_name} must be a collection of strings")
-    if not all(isinstance(item, str) for item in value):
-        raise ValueError(f"{field_name} must contain only strings")
-    normalized = tuple(item.strip() for item in value)
-    if any(not item for item in normalized):
-        raise ValueError(f"{field_name} must not contain blank values")
-    if len(normalized) != len(set(normalized)):
-        raise ValueError(f"{field_name} must not contain duplicates")
-    return normalized
 
 
 def _require_unique_model_ids(values: tuple[ModelRef, ...], field_name: str) -> tuple[ModelRef, ...]:
@@ -1216,17 +1299,9 @@ class SensorType(StrEnum):
     CUSTOM = "CUSTOM"
 
 
-class SensorDefinition(BaseModel):
+class SensorDefinition(_DefinitionBase):
     """A sensor child component whose state is derived from its parent platform."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
-
-    id: DefinitionString
-    name: DefinitionString
-    revision: Revision
-    schema_version: SchemaVersion
-    tags: frozenset[str] = Field(default_factory=frozenset)
-    metadata: Mapping[str, JsonValue] = Field(default_factory=dict)
     sensor_type: SensorType
     mount_transform: RigidTransform
     axes: SensorAxes
@@ -1236,29 +1311,6 @@ class SensorDefinition(BaseModel):
     measurement_models: tuple[ModelRef, ...]
     error_profiles: tuple[ModelRef, ...] = ()
     availability_model: ModelRef | None = None
-
-    @field_validator("tags", mode="before")
-    @classmethod
-    def normalize_tags(cls, value: Any) -> tuple[str, ...]:
-        return _normalize_unique_strings(value, "tags")
-
-    @field_serializer("tags", when_used="always")
-    def serialize_tags(self, value: frozenset[str]) -> list[str]:
-        return sorted(value)
-
-    @field_validator("metadata", mode="before")
-    @classmethod
-    def normalize_metadata(cls, value: Any) -> dict[str, JsonValue]:
-        return normalize_json_object(value)
-
-    @field_validator("metadata")
-    @classmethod
-    def freeze_metadata(cls, value: Mapping[str, JsonValue]) -> Mapping[str, FrozenJsonValue]:
-        return freeze_json_object(value)
-
-    @field_serializer("metadata", when_used="always")
-    def serialize_metadata(self, value: Mapping[str, FrozenJsonValue]) -> dict[str, JsonValue]:
-        return {key: thaw_json_value(nested) for key, nested in value.items()}
 
     @field_validator("measurement_models")
     @classmethod
@@ -1279,9 +1331,9 @@ Run:
 
 ```bash
 uv run pytest packages/sycasphere-core/tests/test_sensors.py packages/sycasphere-core/tests/test_model_refs.py packages/sycasphere-core/tests/test_geometry.py -q
-uv run ruff format packages/sycasphere-core/src/sycasphere/core/sensors.py packages/sycasphere-core/tests/test_sensors.py
-uv run ruff check packages/sycasphere-core/src/sycasphere/core/sensors.py packages/sycasphere-core/tests/test_sensors.py
-uv run mypy packages/sycasphere-core/src/sycasphere/core/sensors.py
+uv run ruff format packages/sycasphere-core/src/sycasphere/core/_definitions.py packages/sycasphere-core/src/sycasphere/core/sensors.py packages/sycasphere-core/tests/test_sensors.py
+uv run ruff check packages/sycasphere-core/src/sycasphere/core/_definitions.py packages/sycasphere-core/src/sycasphere/core/sensors.py packages/sycasphere-core/tests/test_sensors.py
+uv run mypy packages/sycasphere-core/src/sycasphere/core/_definitions.py packages/sycasphere-core/src/sycasphere/core/sensors.py
 ```
 
 Expected: all commands PASS.
@@ -1289,7 +1341,7 @@ Expected: all commands PASS.
 - [ ] **Step 5: Commit the sensor contract**
 
 ```bash
-git add packages/sycasphere-core/src/sycasphere/core/sensors.py packages/sycasphere-core/tests/test_sensors.py
+git add packages/sycasphere-core/src/sycasphere/core/_definitions.py packages/sycasphere-core/src/sycasphere/core/sensors.py packages/sycasphere-core/tests/test_sensors.py
 git commit -m "feat(core): define sensor components"
 ```
 
@@ -1304,7 +1356,7 @@ git commit -m "feat(core): define sensor components"
 
 **Interfaces:**
 
-- Consumes: `CartesianState`, `GeodeticLocation`, `ModelRef`, `SensorDefinition`, `SchemaVersion`.
+- Consumes: private `_DefinitionBase`, `CartesianState`, `GeodeticLocation`, `ModelRef`, `SensorDefinition`, `SchemaVersion`.
 - Produces: `EntityType`, `SpaceObjectPhysicalProperties`, `SpacecraftDefinition`, `OtherSpaceObjectDefinition`, `GroundStationDefinition`, and discriminated `EntityDefinition`.
 
 - [ ] **Step 1: Write failing entity hierarchy tests**
@@ -1738,7 +1790,6 @@ Create `packages/sycasphere-core/src/sycasphere/core/entities.py`:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
@@ -1747,30 +1798,20 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    JsonValue,
     Strict,
-    StringConstraints,
-    ValidationInfo,
     field_serializer,
     field_validator,
 )
-from sycasphere.core._json import (
-    FrozenJsonValue,
-    freeze_json_object,
-    normalize_json_object,
-    thaw_json_value,
+from sycasphere.core._definitions import (
+    DefinitionString,
+    _DefinitionBase,
+    _normalize_unique_strings,
 )
 from sycasphere.core.geometry import GeodeticLocation
 from sycasphere.core.model_refs import ModelRef
-from sycasphere.core.schema import SchemaVersion
 from sycasphere.core.sensors import SensorDefinition
 from sycasphere.core.states import CartesianState
 
-type DefinitionString = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1),
-]
-type Revision = Annotated[int, Strict(), Field(gt=0)]
 type PositiveFiniteFloat = Annotated[
     float,
     Strict(),
@@ -1783,20 +1824,6 @@ type NonNegativeFiniteFloat = Annotated[
     AllowInfNan(False),
     Field(ge=0.0),
 ]
-
-
-def _normalize_unique_strings(value: Any, field_name: str) -> tuple[str, ...]:
-    """Return stripped unique non-blank strings from a collection input."""
-    if not isinstance(value, (list, tuple, set, frozenset)):
-        raise ValueError(f"{field_name} must be a collection of strings")
-    if not all(isinstance(item, str) for item in value):
-        raise ValueError(f"{field_name} must contain only strings")
-    normalized = tuple(item.strip() for item in value)
-    if any(not item for item in normalized):
-        raise ValueError(f"{field_name} must not contain blank values")
-    if len(normalized) != len(set(normalized)):
-        raise ValueError(f"{field_name} must not contain duplicates")
-    return normalized
 
 
 def _require_unique_sensor_ids(
@@ -1839,43 +1866,19 @@ class SpaceObjectPhysicalProperties(BaseModel):
     solar_radiation_pressure_coefficient: NonNegativeFiniteFloat | None = None
 
 
-class _EntityDefinitionBase(BaseModel):
+class _EntityDefinitionBase(_DefinitionBase):
     """Shared immutable identity and non-controlling metadata for physical entities."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
-
-    id: DefinitionString
-    name: DefinitionString
-    revision: Revision
-    schema_version: SchemaVersion
-    tags: frozenset[str] = Field(default_factory=frozenset)
-    metadata: Mapping[str, JsonValue] = Field(default_factory=dict)
     capabilities: frozenset[str] = Field(default_factory=frozenset)
 
-    @field_validator("tags", "capabilities", mode="before")
+    @field_validator("capabilities", mode="before")
     @classmethod
-    def normalize_string_collections(
-        cls, value: Any, info: ValidationInfo
-    ) -> tuple[str, ...]:
-        return _normalize_unique_strings(value, info.field_name)
+    def normalize_capabilities(cls, value: Any) -> tuple[str, ...]:
+        return _normalize_unique_strings(value, "capabilities")
 
-    @field_serializer("tags", "capabilities", when_used="always")
-    def serialize_string_sets(self, value: frozenset[str]) -> list[str]:
+    @field_serializer("capabilities", when_used="always")
+    def serialize_capabilities(self, value: frozenset[str]) -> list[str]:
         return sorted(value)
-
-    @field_validator("metadata", mode="before")
-    @classmethod
-    def normalize_metadata(cls, value: Any) -> dict[str, JsonValue]:
-        return normalize_json_object(value)
-
-    @field_validator("metadata")
-    @classmethod
-    def freeze_metadata(cls, value: Mapping[str, JsonValue]) -> Mapping[str, FrozenJsonValue]:
-        return freeze_json_object(value)
-
-    @field_serializer("metadata", when_used="always")
-    def serialize_metadata(self, value: Mapping[str, FrozenJsonValue]) -> dict[str, JsonValue]:
-        return {key: thaw_json_value(nested) for key, nested in value.items()}
 
 
 # =============================👐Seperate👐==============================

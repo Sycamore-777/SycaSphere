@@ -27,13 +27,14 @@
 
 ```text
 packages/sycasphere-core/src/sycasphere/core/
+├── _definitions.py # 定义对象共享字段和冻结验证，仅供 Core 内部使用
 ├── model_refs.py  # 可插拔科学子模型的数据引用
 ├── geometry.py    # 安装变换、传感器轴和 WGS84 地理位置
 ├── sensors.py     # SensorDefinition
 └── entities.py    # 实体公共字段、具体实体和 EntityDefinition 联合
 ```
 
-现有 `_json.py` 继续负责有限 JSON 的复制、深度冻结与安全序列化。现有 `Epoch`、`FrameRef`、`SchemaVersion` 和 `CartesianState` 作为输入依赖，不复制同义类型。
+私有 `_definitions.py` 集中实现 ID、名称、严格正修订号、标签、schema version 和 metadata 的共享验证，避免 `sensors.py` 与 `entities.py` 复制相同逻辑；它不进入 `sycasphere.core.__all__`。现有 `_json.py` 继续负责有限 JSON 的复制、深度冻结与安全序列化。现有 `Epoch`、`FrameRef`、`SchemaVersion` 和 `CartesianState` 作为输入依赖，不复制同义类型。
 
 每个模块只依赖 Core 内部模块、Pydantic、NumPy 或 Python 标准库。不得导入 Orekit、JPype、Java、SQLite、PyArrow、FastAPI 或前端库。
 
@@ -60,6 +61,8 @@ metadata
 - `metadata` 是非控制性、有限且深度不可变的 JSON 对象；
 - 输入集合或映射在构造后被调用方修改时，不得改变模型；
 - 所有模型使用 `frozen=True` 和 `extra="forbid"`。
+
+这些字段由 Core 私有 `_DefinitionBase` 统一实现。`SensorDefinition` 直接继承它；实体内部基类在其上只增加 `capabilities`，不得重新实现 tags 或 metadata 验证。
 
 实体在上述字段之外保存 `capabilities`。能力值是稳定、非空的字符串集合，可以为空，不得包含重复值。Engine 不得依据显示名称推断能力。
 
