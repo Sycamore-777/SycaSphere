@@ -7,14 +7,15 @@
 创建者    : Sycamore
 创建日期  : 2026-07-22
 最后修改  : 2026-07-22
-版本号    : v1.0.0
+版本号    : v1.1.0
 
 ■ 用途说明:
-  验证传感器安装刚体变换和显式传感器坐标轴的边界契约。
+  验证传感器安装刚体变换、显式传感器坐标轴以及有效 WGS84 大地坐标位置契约。
 
 ■ 主要函数功能:
   - 安装变换验证: 验证 SI 平移、父到子旋转方向和 wxyz 单位四元数。
   - 传感器轴验证: 验证单位、正交且右手的 SENSOR 坐标轴。
+  - 大地坐标位置验证: 验证 WGS84 帧约束、有限的纬度、经度、椭球高和不可变性。
 
 ■ 功能特性:
   ✓ 覆盖有限值、固定长度、严格数值输入、容差与不可变性。
@@ -24,6 +25,7 @@
   - 无
 
 ■ 更新日志:
+  v1.1.0 (2026-07-22): 新增 WGS84 大地坐标位置契约测试。
   v1.0.0 (2026-07-22): 创建安装变换和传感器轴契约测试。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -37,7 +39,14 @@ from collections import deque
 import numpy as np
 import pytest
 from pydantic import ValidationError
-from sycasphere.core.geometry import RigidTransform, SensorAxes
+from sycasphere.core.frames import (
+    CoordinateRepresentation,
+    EarthFixedFrameSpec,
+    FrameKind,
+    FrameRef,
+    ReferenceEllipsoid,
+)
+from sycasphere.core.geometry import GeodeticLocation, RigidTransform, SensorAxes
 
 
 # =============================👐Seperate👐==============================
@@ -251,3 +260,116 @@ def test_geometry_models_are_frozen() -> None:
         transform.translation_m = (0.0, 0.0, 0.0)
     with pytest.raises(ValidationError):
         axes.boresight = (1.0, 0.0, 0.0)
+
+
+# =============================👐Seperate👐==============================
+# WGS84 geodetic-location tests
+# =============================👐Seperate👐==============================
+def _geodetic_frame() -> FrameRef:
+    return FrameRef(
+        kind=FrameKind.EARTH_FIXED,
+        representation=CoordinateRepresentation.GEODETIC,
+        earth_fixed=EarthFixedFrameSpec(
+            itrf_realization="ITRF2020",
+            iers_conventions="IERS_2010",
+            eop_data_id="iers-bulletin-a:2026-07-21",
+        ),
+        ellipsoid=ReferenceEllipsoid.WGS84,
+    )
+
+
+def test_geodetic_location_accepts_wgs84_and_negative_ellipsoid_height() -> None:
+    location = GeodeticLocation(
+        frame=_geodetic_frame(),
+        longitude_rad=2.03444394,
+        latitude_rad=0.69625189,
+        ellipsoid_height_m=-20.0,
+    )
+
+    assert location.frame.ellipsoid is ReferenceEllipsoid.WGS84
+    assert location.ellipsoid_height_m == -20.0
+
+
+@pytest.mark.parametrize(
+    ("longitude_rad", "latitude_rad"),
+    [
+        (math.pi + 1e-6, 0.0),
+        (-math.pi - 1e-6, 0.0),
+        (0.0, math.pi / 2 + 1e-6),
+        (0.0, -math.pi / 2 - 1e-6),
+    ],
+)
+def test_geodetic_location_rejects_out_of_range_angles(
+    longitude_rad: float,
+    latitude_rad: float,
+) -> None:
+    with pytest.raises(ValidationError):
+        GeodeticLocation(
+            frame=_geodetic_frame(),
+            longitude_rad=longitude_rad,
+            latitude_rad=latitude_rad,
+            ellipsoid_height_m=0.0,
+        )
+
+
+@pytest.mark.parametrize("invalid", [math.nan, math.inf, -math.inf])
+def test_geodetic_location_rejects_non_finite_height(invalid: float) -> None:
+    with pytest.raises(ValidationError):
+        GeodeticLocation(
+            frame=_geodetic_frame(),
+            longitude_rad=0.0,
+            latitude_rad=0.0,
+            ellipsoid_height_m=invalid,
+        )
+
+
+def test_geodetic_location_rejects_non_geodetic_or_non_wgs84_frame() -> None:
+    with pytest.raises(ValidationError):
+        GeodeticLocation(
+            frame=FrameRef(kind=FrameKind.J2000),
+            longitude_rad=0.0,
+            latitude_rad=0.0,
+            ellipsoid_height_m=0.0,
+        )
+
+
+@pytest.mark.parametrize("field_name", ["longitude_rad", "latitude_rad", "ellipsoid_height_m"])
+def test_geodetic_location_rejects_non_float_number_coercion(field_name: str) -> None:
+    data: dict[str, object] = {
+        "frame": _geodetic_frame(),
+        "longitude_rad": 0.0,
+        "latitude_rad": 0.0,
+        "ellipsoid_height_m": 0.0,
+    }
+    data[field_name] = "2.0"
+
+    with pytest.raises(ValidationError):
+        GeodeticLocation.model_validate(data)
+
+
+@pytest.mark.parametrize("field_name", ["longitude_rad", "latitude_rad", "ellipsoid_height_m"])
+def test_geodetic_location_rejects_non_builtin_float_numbers(field_name: str) -> None:
+    data: dict[str, object] = {
+        "frame": _geodetic_frame(),
+        "longitude_rad": 0.0,
+        "latitude_rad": 0.0,
+        "ellipsoid_height_m": 0.0,
+    }
+    data[field_name] = 0
+
+    with pytest.raises(ValidationError):
+        GeodeticLocation.model_validate(data)
+
+
+def test_geodetic_location_round_trips_and_is_frozen() -> None:
+    location = GeodeticLocation(
+        frame=_geodetic_frame(),
+        longitude_rad=1.0,
+        latitude_rad=0.5,
+        ellipsoid_height_m=100.0,
+    )
+    restored = GeodeticLocation.model_validate(location.model_dump(mode="json"))
+
+    assert restored == location
+    with pytest.raises(ValidationError):
+        location.longitude_rad = 0.0

@@ -7,14 +7,15 @@
 创建者    : Sycamore
 创建日期  : 2026-07-22
 最后修改  : 2026-07-22
-版本号    : v1.0.0
+版本号    : v1.1.0
 
 ■ 用途说明:
-  定义传感器安装刚体变换和显式右手传感器轴的不可变边界契约。
+  定义传感器安装刚体变换、显式右手传感器轴以及有效 WGS84 大地坐标位置的不可变边界契约。
 
 ■ 主要函数功能:
   - RigidTransform: 验证父坐标系到子坐标系的 SI 平移和 wxyz 旋转。
   - SensorAxes: 验证单位、正交且右手的 SENSOR 坐标轴。
+  - GeodeticLocation: 验证 EARTH_FIXED/GEODETIC/WGS84 帧和纬度、经度、椭球高。
 
 ■ 功能特性:
   ✓ 固定四元数顺序和父到子旋转方向。
@@ -24,6 +25,7 @@
   - 无
 
 ■ 更新日志:
+  v1.1.0 (2026-07-22): 新增 WGS84 大地坐标位置契约。
   v1.0.0 (2026-07-22): 创建安装变换和传感器轴契约。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -39,9 +41,16 @@ from pydantic import (
     AllowInfNan,
     BaseModel,
     ConfigDict,
+    Field,
     Strict,
     field_validator,
     model_validator,
+)
+from sycasphere.core.frames import (
+    CoordinateRepresentation,
+    FrameKind,
+    FrameRef,
+    ReferenceEllipsoid,
 )
 
 type FiniteComponent = Annotated[float, Strict(), AllowInfNan(False)]
@@ -153,4 +162,34 @@ class SensorAxes(BaseModel):
             atol=_GEOMETRY_TOLERANCE,
         ):
             raise ValueError("sensor axes must satisfy horizontal cross vertical = boresight")
+        return self
+
+
+class GeodeticLocation(BaseModel):
+    """A validated WGS84 location in an explicitly versioned Earth-fixed frame."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    frame: FrameRef
+    longitude_rad: FiniteComponent = Field(ge=-math.pi, le=math.pi)
+    latitude_rad: FiniteComponent = Field(ge=-math.pi / 2, le=math.pi / 2)
+    ellipsoid_height_m: FiniteComponent
+
+    @field_validator("longitude_rad", "latitude_rad", "ellipsoid_height_m", mode="before")
+    @classmethod
+    def validate_builtin_float(cls, value: Any) -> Any:
+        """Require explicit built-in floats at this scalar serialization boundary."""
+        if type(value) is not float:
+            raise ValueError("geodetic coordinates must be built-in floats")
+        return value
+
+    @model_validator(mode="after")
+    def validate_wgs84_geodetic_frame(self) -> GeodeticLocation:
+        """Require EARTH_FIXED/GEODETIC with the WGS84 reference ellipsoid."""
+        if (
+            self.frame.kind is not FrameKind.EARTH_FIXED
+            or self.frame.representation is not CoordinateRepresentation.GEODETIC
+            or self.frame.ellipsoid is not ReferenceEllipsoid.WGS84
+        ):
+            raise ValueError("GeodeticLocation requires an EARTH_FIXED GEODETIC WGS84 frame")
         return self
