@@ -1273,7 +1273,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from sycasphere.core._definitions import _DefinitionBase
 from sycasphere.core.geometry import RigidTransform, SensorAxes
 from sycasphere.core.model_refs import ModelRef
@@ -1308,7 +1308,7 @@ class SensorDefinition(_DefinitionBase):
     pointing_model: ModelRef
     field_of_view_model: ModelRef
     visibility_model: ModelRef
-    measurement_models: tuple[ModelRef, ...]
+    measurement_models: tuple[ModelRef, ...] = Field(min_length=1)
     error_profiles: tuple[ModelRef, ...] = ()
     availability_model: ModelRef | None = None
 

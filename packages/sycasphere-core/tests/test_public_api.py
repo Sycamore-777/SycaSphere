@@ -74,6 +74,13 @@ def test_public_contract_exports_are_exact() -> None:
     assert set(core.__all__) == EXPECTED_PUBLIC_CONTRACTS
 
 
+def test_sensor_schema_requires_at_least_one_measurement_model() -> None:
+    """Published SensorDefinition schema must reject an empty model collection."""
+    schema = core.SensorDefinition.model_json_schema()
+
+    assert schema["properties"]["measurement_models"]["minItems"] == 1
+
+
 def _public_model_schemas() -> dict[str, dict[str, Any]]:
     """Return JSON Schemas for the reviewed public Pydantic model surface."""
     models: tuple[type[BaseModel], ...] = (

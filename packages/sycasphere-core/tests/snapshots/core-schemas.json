@@ -794,6 +794,7 @@
             "items": {
               "$ref": "#/$defs/ModelRef"
             },
+            "minItems": 1,
             "title": "Measurement Models",
             "type": "array"
           },
@@ -1870,6 +1871,7 @@
             "items": {
               "$ref": "#/$defs/ModelRef"
             },
+            "minItems": 1,
             "title": "Measurement Models",
             "type": "array"
           },
@@ -3044,6 +3046,7 @@
         "items": {
           "$ref": "#/$defs/ModelRef"
         },
+        "minItems": 1,
         "title": "Measurement Models",
         "type": "array"
       },
@@ -3516,6 +3519,7 @@
             "items": {
               "$ref": "#/$defs/ModelRef"
             },
+            "minItems": 1,
             "title": "Measurement Models",
             "type": "array"
           },
