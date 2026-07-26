@@ -52,6 +52,11 @@ SycaSphere 当前定位为：
 
 这些能力可以在核心模型稳定后扩展，但不得提前污染当前领域边界。
 
+截至 2026-07-26，仓库实际实现的是 `sycasphere-core` 中的不可变领域契约，
+包括仿真定义、机动、观测计划、运行请求和执行清单模型。Engine 的
+`prepare()`/执行/会话、观测与结果生成、Orekit 适配，以及 Platform 的任务、
+实验、运行生命周期和持久化仍是后续计划，不得把下文的目标架构理解为已交付运行时。
+
 ---
 
 ## 2. 总体分层
@@ -65,9 +70,11 @@ flowchart TB
     P --> E[ExperimentDefinition\n算法与试验配置]
     E --> S
     E --> M
-    E --> Q[RunRequest\n提交的运行意图]
-    Q --> R[RunManifest\n解析后的不可变科学输入]
-    R --> RR[RunRecord / RunAttempt\n可变操作状态]
+    E --> Q[Platform RunRequest\n提交的运行意图，计划]
+    Q --> SR[SimulationRunRequest\n完整 Engine 科学输入]
+    SR --> R[SimulationExecutionManifest\n不可变 Engine 输入 provenance]
+    R --> PM[Platform RunManifest\n可选的上层 provenance，计划]
+    PM --> RR[RunRecord / RunAttempt\n可变操作状态，计划]
     RR --> O[RunOutcome\n一次性终态结果]
     O --> B[ResultBundle\n真值、观测、估计、指标和日志]
     B --> W[AnalysisWorkspaceState\n三维与图表交互状态]
@@ -89,7 +96,15 @@ flowchart TB
 - 动力学模型；
 - 预设真实机动和其他基线真值事件。
 
-它不得包含“目标”“主传感器”“被跟踪对象”等任务角色。一次执行的确切时间范围、输出采样、观测计划和命令时间线属于 `SimulationRunRequest`，不得回写到可复用的 `SimulationDefinition`。
+它不得包含“目标”“主传感器”“被跟踪对象”等任务角色。Engine 接收的
+`SimulationRunRequest` 必须嵌入完整 `SimulationDefinition`，不得使用数据库或修订
+引用替代。一次执行的确切时间范围、输出采样、观测计划和命令时间线属于
+`SimulationRunRequest`，不得回写到可复用的 `SimulationDefinition`。
+
+首版要求所有空间对象的 `initial_state.epoch` 与
+`SimulationDefinition.synchronization_epoch` 完全相等。未来可兼容升级为允许每个
+对象的初始时刻不晚于同步时刻，再由 Engine 分别预推进到同步时刻；该升级保留现有
+字段和已满足严格规则的 JSON，不改变首版数据含义。
 
 ### 2.3 MissionDefinition
 
@@ -121,7 +136,18 @@ flowchart TB
 
 ### 2.5 运行对象与 ResultBundle
 
-`RunRequest` 保存用户提交的运行意图。`RunManifest` 在请求解析后生成，是只描述科学输入的不可变清单，必须记录解析后的配置、版本、输入校验值和预期输出。运行状态由 `RunRecord` 和 `RunAttempt` 维护；结束时间、最终状态、错误和输出哈希由终态一次性生成的 `RunOutcome` 保存。`ResultBundle` 保存该次运行经过验证的科学产物和诊断产物。完成的运行不得原地修改。
+Core 已实现的 `SimulationRunRequest` 保存独立 Engine 的完整科学输入；计划中的
+Engine `prepare()` 解析它并生成 `SimulationExecutionManifest`。该 Manifest 是只描述
+解析后科学输入的不可变 provenance，记录精确配置、插件与数据版本、输入校验值和
+预期输出，不是运行状态对象。
+
+Platform 后续若保留自己的 `RunRequest`/`RunManifest` 概念，必须使用
+`Platform RunManifest` 等清晰限定名称，并引用或嵌入
+`SimulationExecutionManifest` 的哈希，再增加 Mission、Experiment、算法和评价输入
+provenance；不得与 Engine Manifest 混用。可变运行状态和重试索引只由未来
+`RunRecord` 和 `RunAttempt` 维护；开始/结束时间、最终状态、错误、运行时命令日志哈希
+和输出哈希只由终态一次性生成的 `RunOutcome` 保存。`ResultBundle` 保存经过验证的
+科学与诊断产物。完成的运行不得原地修改。
 
 ### 2.6 AnalysisWorkspaceState
 
@@ -867,32 +893,52 @@ experiment:
   visualization_profile: interactive-ssa-default
 ```
 
-### 11.2 RunManifest
+### 11.2 SimulationRunRequest 与 SimulationExecutionManifest
 
-每次运行必须记录：
+Core 已实现的 `SimulationRunRequest` 是完整、后端中立的 Engine 科学输入：
 
-- SycaSphere 版本和 Git commit；
-- Python、Java、orekit_jpype、Orekit 和数值依赖版本；
-- 仿真、任务和实验修订版；
-- 算法版本；
-- EOP、闰秒、重力场、星历等外部数据版本和哈希；
-- 随机种子；
-- 解析后的完整参数；
-- 输入产物哈希；
-- 观测通道和预期输出；
+- 嵌入完整 `SimulationDefinition`；
+- `time_range` 是闭区间；
+- `output_sampling` 的采样周期独立于科学后端的数值积分步长和容差；
+- 首版 `command_timeline` 只包含 `ManeuverCommand`；
+- 首版 `observation_schedules` 只包含 `PERIODIC` 和 `EXPLICIT`；
+- 测量模型和误差模型从 `SensorDefinition` 选择，不在请求顶层重复保存引用；
+- 数据链路仍通过运行级 `link_models` 配置；
+- 主随机种子和输出要求随请求冻结。
+
+同一时刻的权威事件顺序为：传播到时刻、保存机动前状态、执行机动、保存机动后事实与
+状态、使用机动后状态尝试观测、最后生成该时刻的常规采样。因此同刻观测是
+post-maneuver observation，不提供可切换的机动前观测解释。
+
+计划中的 Engine `prepare()` 成功后生成不可变
+`SimulationExecutionManifest`，记录：
+
+- 完整源请求及其哈希；
+- `SimulationDefinition` 哈希；
+- 解析后的精确插件实现与配置哈希；
+- EOP、闰秒、重力场、星历等实际外部数据版本和哈希；
+- 稳定派生的随机流；
+- 紧凑的机动、观测和采样时间线；
+- 版本化同刻事件顺序和预期输出；
 - Manifest 内容哈希。
 
-`RunManifest` 自生成起不可变，不包含开始时间、结束时间、运行状态、错误或输出产物哈希。
+`SimulationExecutionManifest` 自生成起不可变，不包含准备、开始或结束墙上时间、
+运行状态、错误、输出产物哈希、本地路径或运行时追加命令。相同请求、插件版本和
+外部数据必须产生等价 Manifest。
+
+Platform 后续若保留 `RunManifest`，它是独立的上层 provenance：引用
+`SimulationExecutionManifest` 哈希并增加 Mission、Experiment、算法和评价输入。
+Platform Manifest 同样不得承载可变状态或终态输出。
 
 ### 11.3 RunRecord 与 RunAttempt
 
-`RunRecord` 保存可变的操作状态和保留策略；状态按照 `CREATED → VALIDATING → QUEUED → RUNNING → FINALIZING → 终态` 推进。`RunAttempt` 表示一次实际执行尝试。可重试故障必须创建新的 Attempt，并继续引用同一个 Manifest；修改科学输入必须创建新的 Run。
+`RunRecord` 保存可变的操作状态和保留策略；状态按照 `CREATED → VALIDATING → QUEUED → RUNNING → FINALIZING → 终态` 推进。`RunAttempt` 表示一次实际执行尝试。可重试故障必须创建新的 Attempt，并继续引用同一个 `SimulationExecutionManifest` 及可选 Platform Manifest；修改科学输入必须创建新的 Run。
 
 ### 11.4 RunOutcome 与 ResultBundle
 
 `RunOutcome` 在运行进入终态时一次性生成，必须记录：
 
-- RunManifest 哈希；
+- `SimulationExecutionManifest` 哈希及可选 Platform Manifest 哈希；
 - 最终状态；
 - 开始和结束时间；
 - 实际运行环境摘要；
@@ -906,7 +952,8 @@ experiment:
 ### 11.5 不可变运行
 
 - 已提交的 ExperimentDefinition 不得被运行过程修改；
-- RunManifest、RunOutcome、ResultBundle 和已经发布的科学产物不得原地覆盖；
+- `SimulationExecutionManifest`、可选 Platform Manifest、RunOutcome、
+  ResultBundle 和已经发布的科学产物不得原地覆盖；
 - RunRecord 的状态、保留级别和 Attempt 索引可以按照状态机更新，但不得回写科学输入；
 - 用户在三维工作台中修改机动、任务或算法参数时，创建新的实验修订或运行分支；
 - 分析注释和视图状态可以单独修改。
@@ -1086,66 +1133,51 @@ CesiumJS 数据不是科学主存储。前端不得反向修改已完成运行�
 
 ### 运行与展示
 
-- `RunRequest`
-- `RunManifest`
-- `RunRecord`
-- `RunAttempt`
-- `RunOutcome`
-- `ResultBundle`
-- `ArtifactRef`
-- `AnalysisWorkspaceState`
+- `SimulationRunRequest`（Core 已实现的完整 Engine 输入）
+- `SimulationExecutionManifest`（Core 已实现的不可变 Engine 输入 provenance）
+- Platform `RunRequest` / `RunManifest`（计划中的上层审计与 provenance）
+- `RunRecord`（计划中的可变状态）
+- `RunAttempt`（计划中的执行尝试）
+- `RunOutcome`（计划中的一次性终态）
+- `ResultBundle`（计划）
+- `ArtifactRef`（计划）
+- `AnalysisWorkspaceState`（计划）
 
 ---
 
 ## 15. 开发阶段
 
-### 领域模型与持久化地基
+### 当前已实现：Core 契约
 
-完成：
+- Pydantic v2 冻结边界模型、严格类型和深度不可变输入；
+- `Epoch`、公共帧、`CartesianState`、实体、传感器和父子关系；
+- `SimulationDefinition`、机动、闭区间时间范围、输出采样以及
+  `PERIODIC`/`EXPLICIT` 观测计划；
+- 完整 `SimulationRunRequest` 和不可变 `SimulationExecutionManifest` 数据契约；
+- 公开 API、JSON Schema 快照、单元测试和独立 Core 分发。
 
-- Pydantic 边界模型；
-- 坐标系枚举和校验；
-- 仿真、任务、实验和运行分层；
-- 平台—传感器父子关系；
-- SQLite repository；
-- 本地 artifact store；
-- Parquet 表模式；
-- 单元测试。
+### 计划：Engine 与 Orekit 真值/观测
 
-### Orekit 真值与观测阶段
+- Engine `prepare()`、执行、交互会话和恢复；
+- JVM 生命周期和 J2000 后端映射；
+- 空间对象传播以及地面站和天基平台状态；
+- Ideal/Reported 观测、误差与链路管线；
+- Truth、观测和诊断结果写入。
 
-完成：
+### 计划：任务、实验、Platform 运行生命周期与持久化
 
-- JVM 生命周期封装；
-- J2000 后端映射；
-- 空间对象传播；
-- 地面站和天基平台状态；
-- 理想观测接口；
-- 误差管线和报告观测接口；
-- 真值和观测产物写入。
+- `MissionDefinition`、`TaskDefinition` 和 `RoleAssignment`；
+- `ExperimentDefinition`；
+- Platform `RunRequest`/`RunManifest`、`RunRecord`、`RunAttempt`、
+  `RunOutcome` 和 `ResultBundle`；
+- SQLite repository、本地 artifact store 和 Parquet 表模式；
+- 运行状态机、保留策略和可重复运行编排。
 
-### 任务与实验编排阶段
+### 计划：分析交互型三维工作台
 
-完成：
-
-- MissionDefinition；
-- TaskDefinition；
-- RoleAssignment；
-- ExperimentDefinition；
-- RunRequest、RunManifest、RunRecord、RunAttempt 和 RunOutcome；
-- 运行状态机；
-- 可重复运行。
-
-### 分析交互型三维阶段
-
-完成：
-
-- CesiumJS 场景；
-- 时间控制；
-- 对象树和选择；
+- CesiumJS 场景、时间控制、对象树和选择；
 - 轨迹、传感器、LOS、协方差和机动图层；
-- ECharts 同步分析；
-- 多算法结果对比。
+- ECharts 同步分析和多算法结果对比。
 
 ---
 
@@ -1173,7 +1205,9 @@ CesiumJS 数据不是科学主存储。前端不得反向修改已完成运行�
 - 地面站和卫星均可嵌套传感器，并正确推导传感器状态。
 - 理想观测和报告观测可分别生成、关联和选择性提供给算法。
 - 定轨误差能够在 J2000 和 LVLH 中输出。
-- 一次运行可通过 RunManifest 与最终 RuntimeCommandJournal 重建其关键科学配置和运行时命令，并通过 RunOutcome 校验终态和输出哈希。
+- 后续运行时可通过 `SimulationExecutionManifest` 与最终
+  `RuntimeCommandJournal` 重建其关键科学配置和运行时命令，并通过
+  `RunOutcome` 校验终态和输出哈希。
 - 真值、估计、传感器、LOS、协方差和机动可在 CesiumJS 工作台中交互查看。
 - 存储层在不引入 Redis 的情况下支持当前单机运行。
 

@@ -57,6 +57,119 @@ The models are frozen and reject extra fields. Cartesian vectors must contain
 exactly three finite floating-point values. `J2000` is the stable public
 inertial-frame semantic; `WGS84` is a reference ellipsoid, not a frame.
 
+## Minimal simulation run request
+
+The following example is executable with `sycasphere-core` alone. It creates a
+complete `SimulationDefinition` whose space-object state is synchronized,
+selects the closed time range `[start, end]`, samples `TRUTH_STATE`, binds one
+exact backend implementation, and creates a self-contained
+`SimulationRunRequest`.
+
+```python
+from sycasphere.core import (
+    CartesianState,
+    CentralBody,
+    EnvironmentDefinition,
+    Epoch,
+    FrameKind,
+    FrameRef,
+    ModelRef,
+    OtherSpaceObjectDefinition,
+    OutputProduct,
+    OutputRequirement,
+    OutputSampling,
+    PluginRef,
+    SamplingRule,
+    SchemaVersion,
+    ScienceBackendBinding,
+    SimulationDefinition,
+    SimulationRunRequest,
+    SimulationTimeRange,
+    SpaceObjectPhysicalProperties,
+    TimeScale,
+)
+
+version = SchemaVersion(major=1, minor=0)
+synchronization_epoch = Epoch(
+    value="2026-07-26T00:00:00Z",
+    time_scale=TimeScale.UTC,
+)
+
+
+def model(model_id: str) -> ModelRef:
+    return ModelRef(model_id=model_id, interface_version=version)
+
+
+space_object = OtherSpaceObjectDefinition(
+    id="target-1",
+    name="Target",
+    revision=1,
+    schema_version=version,
+    initial_state=CartesianState(
+        epoch=synchronization_epoch,
+        frame=FrameRef(kind=FrameKind.J2000),
+        position_m=(7_000_000.0, 0.0, 0.0),
+        velocity_mps=(0.0, 7_500.0, 0.0),
+    ),
+    physical_properties=SpaceObjectPhysicalProperties(
+        mass_kg=500.0,
+        cross_section_area_m2=8.0,
+    ),
+    dynamics_model=model("example.dynamics"),
+    attitude_model=model("example.attitude"),
+)
+
+simulation = SimulationDefinition(
+    id="minimal-simulation",
+    name="Minimal synchronized world",
+    revision=1,
+    schema_version=version,
+    synchronization_epoch=synchronization_epoch,
+    environment=EnvironmentDefinition(
+        id="earth-environment",
+        name="Earth",
+        revision=1,
+        schema_version=version,
+        central_body=CentralBody.EARTH,
+    ),
+    entities=(space_object,),
+)
+
+request = SimulationRunRequest(
+    schema_version=version,
+    simulation_definition=simulation,
+    time_range=SimulationTimeRange(
+        start=synchronization_epoch,
+        end=Epoch(
+            value="2026-07-26T00:10:00Z",
+            time_scale=TimeScale.UTC,
+        ),
+    ),
+    output_sampling=OutputSampling(
+        rules=(
+            SamplingRule(
+                product=OutputProduct.TRUTH_STATE,
+                interval_s=30.0,
+            ),
+        ),
+    ),
+    backend=ScienceBackendBinding(
+        ref=PluginRef(
+            plugin_id="example.science-backend",
+            implementation_version="1.0.0",
+            interface_version=version,
+        ),
+    ),
+    random_seed=42,
+    output_requirements=(OutputRequirement.TRUTH,),
+)
+```
+
+`ManeuverCommand` is the only v1 command-timeline entry type. Observation
+attempts use either `PeriodicObservationSchedule` or
+`ExplicitObservationSchedule`; measurement and error models are selected from
+the scheduled sensor, while data-link models remain run-level inputs.
+
 ## Entity and sensor definitions
 
 The following examples validate definitions only; they do not propagate an
@@ -194,10 +307,17 @@ whether an environment can satisfy declared requirements such as a JDK or
 network access. Reading a manifest does not import, load, or initialize a
 plugin implementation.
 
-## Phase 1 exclusions
+## Current implementation boundary
 
-Even with entity and sensor definitions, Core Phase 1 explicitly excludes
-observations, run requests, engine sessions, propagation, persistence, an API,
-and a UI. Truth generation, observation delivery, estimation, maneuver
-execution, scientific backend adapters, and application orchestration belong
-to later phases.
+Core currently implements the immutable input contracts shown above. It
+validates and freezes definitions, schedules, commands, run requests, and
+execution-manifest data, but it does not propagate or resolve a scientific
+backend.
+
+A planned Engine `prepare()` operation will resolve plugins and external data
+and create a `SimulationExecutionManifest`. The Manifest is immutable input
+provenance, not run status. Mutable execution state belongs to future
+`RunRecord` and `RunAttempt` contracts, while terminal status, errors, and
+output hashes belong to a future `RunOutcome`. Engine sessions, observation
+and result generation, retention, persistence, and Orekit execution remain
+separate planned packages or implementation batches.

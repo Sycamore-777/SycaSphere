@@ -42,6 +42,10 @@ SycaSphere 的核心价值不是锁定一套内置算法，而是让用户自己
 
 当前优先实现本地 Python 插件。容器和远程服务保留协议边界，但不要求在第一开发阶段完成。MATLAB/C++ 专用适配器不进入当前核心。
 
+截至 2026-07-26，仓库已实现的是后端中立的 Core 输入契约；本文描述的 Algorithm
+Gateway、Batch/Streaming 生命周期、观测结果、评价、Platform 运行记录和持久化仍为
+计划接口，不表示已有可执行运行时。
+
 ---
 
 ## 2. 架构位置
@@ -80,6 +84,16 @@ flowchart TB
 - 允许算法直接读取 TruthState；
 - 向算法传递 Orekit、JPype 或 Java 对象；
 - 接受无法评价和展示的私有结果替代标准结果。
+
+计划中的 Engine 在算法网关之前接收自包含的 `SimulationRunRequest`，其中嵌入完整
+`SimulationDefinition`，并由 `prepare()` 生成不可变
+`SimulationExecutionManifest`。首版请求的 `command_timeline` 只包含
+`ManeuverCommand`，观测计划只使用 `PERIODIC` 和 `EXPLICIT` 两种判别类型；测量与
+误差模型从传感器定义选择，不在请求顶层重复，只有数据链路模型保留为运行级
+`link_models`。首版所有空间对象的初始状态时刻必须与
+`synchronization_epoch` 完全相等；未来可兼容升级为允许每个对象从不晚于同步时刻的
+状态分别预推进，且不改变首版数据含义。这些 Core 契约已经实现，Engine 准备和后续
+算法交付尚未实现。
 
 ---
 
@@ -273,6 +287,10 @@ observation_policy:
 - 算法不得在运行时自行切换观测通道；
 - 漏测事件不发送零值或 NaN 观测；
 - 正式评测禁止读取 TruthState。
+- 同一科学时刻先执行机动，再用机动后状态尝试观测；算法网关不得把同刻观测重新解释
+  为机动前观测。
+- Truth 等输出采样周期与后端数值积分设置相互独立，算法数据交付不得把二者混为同一
+  控制参数。
 
 ---
 
@@ -763,12 +781,20 @@ TrackEstimate / ManeuverHypothesis JSON
 
 - 算法 manifest 必须声明输入和输出坐标系；
 - 平台不得静默转换；
-- 若实验允许转换，转换链必须记录在 RunManifest；
+- 若实验允许转换，Engine 科学转换链必须记录在
+  `SimulationExecutionManifest` 的解析后插件与外部数据 provenance 中；未来
+  Platform `RunManifest` 若保留，只引用该 Manifest 哈希并补充 Mission、
+  Experiment、算法和评价 provenance；
 - 公共惯性坐标系名称统一为 J2000；
 - LVLH、VVLH、BODY 和 SENSOR 输出必须包含 owner；
 - 时间转换必须记录时间数据版本；
 - 在线算法获得的所有消息必须包含 measurement_epoch；
 - 需要真实链路模拟时还必须包含 arrival_time。
+
+Platform `RunManifest` 即使后续保留也只是不可变输入 provenance，不包含运行状态、
+开始/结束墙上时间、错误或输出哈希。可变状态和重试尝试分别属于 `RunRecord` 与
+`RunAttempt`；最终状态、时间、错误、运行时环境和输出哈希属于一次性
+`RunOutcome`。
 
 ### 14.2 评价器转换
 
@@ -847,9 +873,13 @@ TrackEstimate / ManeuverHypothesis JSON
 
 ## 17. 开发阶段
 
-### 算法注册与离线接口阶段
+以下各阶段均为计划；当前仓库只交付 Core 的定义、机动、计划、
+`SimulationRunRequest` 和 `SimulationExecutionManifest` 契约。Engine/session、
+Ideal/Reported 观测与结果、Algorithm Gateway 和 Platform 生命周期尚未实现。
 
-完成：
+### 计划：算法注册与离线接口阶段
+
+本阶段应完成：
 
 - AlgorithmManifest；
 - JSON Schema 配置；
@@ -861,9 +891,9 @@ TrackEstimate / ManeuverHypothesis JSON
 - 一个内置基线定轨算法；
 - 一个外部示例插件。
 
-### 在线会话阶段
+### 计划：在线会话阶段
 
-完成：
+本阶段应完成：
 
 - StreamingAlgorithm Protocol；
 - session manager；
@@ -873,9 +903,9 @@ TrackEstimate / ManeuverHypothesis JSON
 - checkpoint；
 - 一个在线滤波示例算法。
 
-### 统一评价与交互阶段
+### 计划：统一评价与交互阶段
 
-完成：
+本阶段应完成：
 
 - J2000 和 LVLH 误差；
 - 残差和检测指标；
@@ -883,9 +913,9 @@ TrackEstimate / ManeuverHypothesis JSON
 - 三维和 ECharts 数据映射；
 - 运行结果回放。
 
-### 外部运行环境阶段
+### 计划：外部运行环境阶段
 
-后续完成：
+本阶段后续应完成：
 
 - 容器 batch runner；
 - 远程 batch API；
