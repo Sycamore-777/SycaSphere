@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-26
 最后修改  : 2026-07-26
-版本号    : v1.1.0
+版本号    : v1.2.0
 
 ■ 用途说明:
   定义独立仿真引擎可直接验证、准备和执行的自包含不可变科学输入边界。
@@ -26,6 +26,7 @@
   - 无
 
 ■ 更新日志:
+  v1.2.0 (2026-07-26): 加固运行请求嵌套输入重验及执行清单源输入等价性校验
   v1.1.0 (2026-07-26): 增加不可变仿真执行清单、解析记录和完整性校验
   v1.0.0 (2026-07-26): 创建自包含仿真运行请求契约
 
@@ -196,7 +197,11 @@ def _require_epoch_in_closed_interval(
 class SimulationRunRequest(BaseModel):
     """A complete immutable input that an independent simulation engine can prepare."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        revalidate_instances="always",
+    )
 
     schema_version: SchemaVersion
     simulation_definition: SimulationDefinition
@@ -208,6 +213,30 @@ class SimulationRunRequest(BaseModel):
     link_models: tuple[ModelRef, ...] = ()
     random_seed: UInt64
     output_requirements: frozenset[OutputRequirement]
+
+    @field_validator(
+        "schema_version",
+        "simulation_definition",
+        "time_range",
+        "output_sampling",
+        "backend",
+        mode="before",
+    )
+    @classmethod
+    def snapshot_request_models(cls, value: Any) -> Any:
+        """Copy and revalidate every nested model at the public request boundary."""
+        return _snapshot_model_input(value)
+
+    @field_validator(
+        "observation_schedules",
+        "command_timeline",
+        "link_models",
+        mode="before",
+    )
+    @classmethod
+    def snapshot_request_model_collections(cls, value: Any) -> Any:
+        """Copy and revalidate every nested record in request collections."""
+        return _snapshot_model_collection(value)
 
     @field_validator("random_seed", mode="before")
     @classmethod
@@ -568,16 +597,50 @@ class SimulationExecutionManifest(BaseModel):
         if self.prepared_timeline.output_sampling != self.source_request.output_sampling:
             raise ValueError("prepared output_sampling must equal source_request output_sampling")
 
-        source_schedule_ids = {
-            schedule.schedule_id for schedule in self.source_request.observation_schedules
+        source_schedules_by_id = {
+            schedule.schedule_id: schedule for schedule in self.source_request.observation_schedules
         }
-        prepared_schedule_ids = {
-            schedule.schedule_id for schedule in self.prepared_timeline.observation_schedules
+        prepared_schedules_by_id = {
+            schedule.schedule_id: schedule
+            for schedule in self.prepared_timeline.observation_schedules
         }
-        if prepared_schedule_ids != source_schedule_ids:
+        if prepared_schedules_by_id != source_schedules_by_id:
             raise ValueError(
-                "prepared observation schedule_id set must equal source_request schedule_id set"
+                "prepared observation schedules must equal source_request schedules "
+                "by schedule_id and complete content"
             )
+
+        expected_maneuvers: dict[
+            tuple[PreparedManeuverSource, str],
+            tuple[str, Epoch, ManeuverSpec],
+        ] = {
+            (PreparedManeuverSource.PLANNED, maneuver.maneuver_id): (
+                maneuver.spacecraft_id,
+                maneuver.epoch,
+                maneuver.maneuver,
+            )
+            for maneuver in self.source_request.simulation_definition.planned_maneuvers
+        }
+        expected_maneuvers.update(
+            {
+                (PreparedManeuverSource.COMMAND, command.command_id): (
+                    command.spacecraft_id,
+                    command.epoch,
+                    command.maneuver,
+                )
+                for command in self.source_request.command_timeline
+            }
+        )
+        prepared_maneuvers = {
+            (entry.source, entry.event_id): (
+                entry.spacecraft_id,
+                entry.epoch,
+                entry.maneuver,
+            )
+            for entry in self.prepared_timeline.maneuvers
+        }
+        if prepared_maneuvers != expected_maneuvers:
+            raise ValueError("prepared maneuvers must equal planned and command source maneuvers")
 
         ## -------------- step: recalculate all manifest hashes ---------
         expected_source_hash = sha256_canonical_json(self.source_request)

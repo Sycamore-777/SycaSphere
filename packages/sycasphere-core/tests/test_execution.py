@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-26
 最后修改  : 2026-07-26
-版本号    : v1.1.0
+版本号    : v1.2.0
 
 ■ 用途说明:
   验证自包含仿真运行请求及不可变执行清单的确定性、完整性和边界一致性约束。
@@ -26,6 +26,7 @@
   - 无
 
 ■ 更新日志:
+  v1.2.0 (2026-07-26): 增加请求信任边界及执行清单源输入等价性回归测试
   v1.1.0 (2026-07-26): 增加不可变仿真执行清单契约测试
   v1.0.0 (2026-07-26): 创建 SimulationRunRequest 契约测试
 
@@ -387,6 +388,78 @@ def test_request_rejects_nonfinite_copied_backend_configuration() -> None:
     data["backend"] = copied
 
     with pytest.raises(ValidationError):
+        SimulationRunRequest.model_validate(data)
+
+
+def test_request_validation_revalidates_existing_tampered_request_instance() -> None:
+    tampered = make_request().model_copy(update={"random_seed": -1})
+
+    with pytest.raises(ValidationError, match="random_seed"):
+        SimulationRunRequest.model_validate(tampered)
+
+
+def test_request_revalidates_copied_output_sampling_rules() -> None:
+    request = make_request()
+    invalid_rule = request.output_sampling.rules[0].model_copy(update={"interval_s": -1.0})
+    copied_sampling = request.output_sampling.model_copy(update={"rules": (invalid_rule,)})
+    data = request.model_dump(mode="python")
+    data["output_sampling"] = copied_sampling
+
+    with pytest.raises(ValidationError, match="interval_s"):
+        SimulationRunRequest.model_validate(data)
+
+
+def test_request_revalidates_copied_simulation_definition() -> None:
+    request = make_request()
+    invalid_entity = request.simulation_definition.entities[0].model_copy(update={"name": ""})
+    copied_definition = request.simulation_definition.model_copy(
+        update={"entities": (invalid_entity,), "planned_maneuvers": ()}
+    )
+    data = request.model_dump(mode="python")
+    data["simulation_definition"] = copied_definition
+    data["observation_schedules"] = ()
+
+    with pytest.raises(ValidationError, match="name"):
+        SimulationRunRequest.model_validate(data)
+
+
+def test_request_rejects_copied_simulation_definition_with_empty_entities() -> None:
+    request = make_request()
+    copied_definition = request.simulation_definition.model_copy(
+        update={"entities": (), "planned_maneuvers": ()}
+    )
+    data = request.model_dump(mode="python")
+    data["simulation_definition"] = copied_definition
+    data["observation_schedules"] = ()
+
+    with pytest.raises(ValidationError, match="entities"):
+        SimulationRunRequest.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_field"),
+    [
+        ("observation_schedules", "cadence_s"),
+        ("command_timeline", "command_id"),
+        ("link_models", "model_id"),
+    ],
+)
+def test_request_revalidates_copied_collection_members(
+    field_name: str,
+    invalid_field: str,
+) -> None:
+    request = make_request()
+    data = request.model_dump(mode="python")
+    if field_name == "observation_schedules":
+        invalid = request.observation_schedules[0].model_copy(update={"cadence_s": -1.0})
+    elif field_name == "command_timeline":
+        invalid = make_impulsive_command().model_copy(update={"command_id": ""})
+    else:
+        invalid = request.link_models[0].model_copy(update={"model_id": ""})
+        data["observation_schedules"] = ()
+    data[field_name] = (invalid,)
+
+    with pytest.raises(ValidationError, match=invalid_field):
         SimulationRunRequest.model_validate(data)
 
 
@@ -1094,6 +1167,110 @@ def test_manifest_requires_prepared_schedule_ids_to_equal_source_request_ids() -
     mismatched = PreparedTimeline(
         maneuvers=timeline.maneuvers,
         observation_schedules=(other_schedule,),
+        output_sampling=timeline.output_sampling,
+    )
+
+    with pytest.raises(ValidationError, match="schedule_id"):
+        make_manifest(source_request=request, prepared_timeline=mismatched)
+
+
+def test_manifest_rejects_omitted_source_maneuver() -> None:
+    request = make_manifest_request()
+    timeline = make_prepared_timeline(request)
+    omitted = PreparedTimeline(
+        maneuvers=(timeline.maneuvers[0],),
+        observation_schedules=timeline.observation_schedules,
+        output_sampling=timeline.output_sampling,
+    )
+
+    with pytest.raises(ValidationError, match="maneuver"):
+        make_manifest(source_request=request, prepared_timeline=omitted)
+
+
+def test_manifest_rejects_extra_prepared_maneuver() -> None:
+    request = make_manifest_request()
+    timeline = make_prepared_timeline(request)
+    extra = timeline.maneuvers[1].model_copy(update={"order_index": 2, "event_id": "extra-command"})
+    expanded = PreparedTimeline(
+        maneuvers=(*timeline.maneuvers, extra),
+        observation_schedules=timeline.observation_schedules,
+        output_sampling=timeline.output_sampling,
+    )
+
+    with pytest.raises(ValidationError, match="maneuver"):
+        make_manifest(source_request=request, prepared_timeline=expanded)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "changed_value"),
+    [
+        ("source", PreparedManeuverSource.COMMAND),
+        ("event_id", "other-event"),
+        ("spacecraft_id", "target-1"),
+        ("epoch", END_EPOCH),
+        (
+            "maneuver",
+            ImpulsiveManeuverSpec(
+                delta_v_mps=(0.0, 0.3, 0.0),
+                frame=FrameRef(kind=FrameKind.J2000),
+            ),
+        ),
+    ],
+)
+def test_manifest_rejects_prepared_maneuver_different_from_source(
+    field_name: str,
+    changed_value: object,
+) -> None:
+    request = make_manifest_request()
+    timeline = make_prepared_timeline(request)
+    changed = timeline.maneuvers[0].model_copy(update={field_name: changed_value})
+    mismatched = PreparedTimeline(
+        maneuvers=(changed, timeline.maneuvers[1]),
+        observation_schedules=timeline.observation_schedules,
+        output_sampling=timeline.output_sampling,
+    )
+
+    with pytest.raises(ValidationError, match="maneuver"):
+        make_manifest(source_request=request, prepared_timeline=mismatched)
+
+
+def test_manifest_ignores_only_prepared_maneuver_order_metadata() -> None:
+    request = make_manifest_request()
+    timeline = make_prepared_timeline(request)
+    reordered = PreparedTimeline(
+        maneuvers=tuple(
+            entry.model_copy(update={"order_index": order_index})
+            for order_index, entry in enumerate(reversed(timeline.maneuvers))
+        ),
+        observation_schedules=timeline.observation_schedules,
+        output_sampling=timeline.output_sampling,
+    )
+
+    manifest = make_manifest(source_request=request, prepared_timeline=reordered)
+
+    assert tuple(entry.source for entry in manifest.prepared_timeline.maneuvers) == (
+        PreparedManeuverSource.COMMAND,
+        PreparedManeuverSource.PLANNED,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "changed_value"),
+    [
+        ("cadence_s", 5.0),
+        ("sensor_id", "other-sensor"),
+    ],
+)
+def test_manifest_rejects_prepared_schedule_content_different_from_source(
+    field_name: str,
+    changed_value: object,
+) -> None:
+    request = make_manifest_request()
+    timeline = make_prepared_timeline(request)
+    changed = request.observation_schedules[0].model_copy(update={field_name: changed_value})
+    mismatched = PreparedTimeline(
+        maneuvers=timeline.maneuvers,
+        observation_schedules=(changed,),
         output_sampling=timeline.output_sampling,
     )
 
