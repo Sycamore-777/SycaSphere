@@ -85,7 +85,12 @@ type UInt64 = Annotated[
 class ScienceBackendBinding(BaseModel):
     """An exact science-backend implementation binding with immutable configuration."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        validate_default=True,
+        revalidate_instances="always",
+    )
 
     ref: PluginRef
     configuration: Mapping[str, JsonValue] = Field(default_factory=dict)

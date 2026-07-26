@@ -349,6 +349,32 @@ def test_backend_default_configuration_is_frozen() -> None:
         backend.configuration["new"] = True
 
 
+def test_request_revalidates_copied_backend_configuration() -> None:
+    request = make_request()
+    mutable = {"nested": []}
+    copied = request.backend.model_copy(update={"configuration": mutable})
+    data = request.model_dump(mode="python")
+    data["backend"] = copied
+
+    accepted = SimulationRunRequest.model_validate(data)
+    mutable["nested"].append("changed")
+
+    assert accepted.backend is not copied
+    assert accepted.backend.configuration["nested"] == ()
+    with pytest.raises(AttributeError):
+        accepted.backend.configuration["nested"].append("still-mutable")
+
+
+def test_request_rejects_nonfinite_copied_backend_configuration() -> None:
+    request = make_request()
+    copied = request.backend.model_copy(update={"configuration": {"value": math.nan}})
+    data = request.model_dump(mode="python")
+    data["backend"] = copied
+
+    with pytest.raises(ValidationError):
+        SimulationRunRequest.model_validate(data)
+
+
 @pytest.mark.parametrize(
     "field_name",
     ["output_path", "retention_policy", "run_status", "database_ref"],
