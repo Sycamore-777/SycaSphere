@@ -42,6 +42,8 @@
   - 为 `SpacecraftDefinition` 增加可选 `maneuver_capability`。
 - Create `packages/sycasphere-core/src/sycasphere/core/simulations.py`
   - 中心天体、外部数据、环境和完整仿真定义。
+- Modify `packages/sycasphere-core/src/sycasphere/core/epoch.py`
+  - 提供包内私有、任意精度且不跨时间尺度转换的日历时刻比较助手。
 - Create `packages/sycasphere-core/src/sycasphere/core/schedules.py`
   - 运行时间范围、输出采样和两类观测调度。
 - Create `packages/sycasphere-core/src/sycasphere/core/execution.py`
@@ -54,6 +56,7 @@
 - Create `packages/sycasphere-core/tests/test_canonical.py`
 - Create `packages/sycasphere-core/tests/test_maneuvers.py`
 - Create `packages/sycasphere-core/tests/test_simulations.py`
+- Modify `packages/sycasphere-core/tests/test_epoch.py`
 - Create `packages/sycasphere-core/tests/test_schedules.py`
 - Create `packages/sycasphere-core/tests/test_execution.py`
 - Modify `packages/sycasphere-core/tests/test_entities.py`
@@ -479,6 +482,8 @@ git commit -m "feat(core): define maneuver contracts"
 **Files:**
 - Create: `packages/sycasphere-core/src/sycasphere/core/simulations.py`
 - Create: `packages/sycasphere-core/tests/test_simulations.py`
+- Modify: `packages/sycasphere-core/src/sycasphere/core/epoch.py`
+- Modify: `packages/sycasphere-core/tests/test_epoch.py`
 
 **Interfaces:**
 - Consumes: `_DefinitionBase`, `EntityDefinition`, entity concrete classes, `Epoch`, `ModelRef`, `PlannedTruthManeuver`, `_validate_maneuver_binding`.
@@ -487,6 +492,7 @@ git commit -m "feat(core): define maneuver contracts"
   - `ExternalDataRef`
   - `EnvironmentDefinition`
   - `SimulationDefinition`
+  - `_is_strictly_before_same_scale(left: Epoch, right: Epoch) -> bool | None`
 
 - [ ] **Step 1: Write failing simulation-definition tests**
 
@@ -635,7 +641,7 @@ class SimulationDefinition(_DefinitionBase):
 5. rejects duplicate `maneuver_id`;
 6. resolves each planned target to a `SpacecraftDefinition`;
 7. calls `_validate_maneuver_binding` with the target capability;
-8. when maneuver epoch and synchronization epoch use the same `TimeScale`, compares their canonical calendar strings and rejects a maneuver earlier than synchronization; cross-scale ordering remains Engine `prepare()` work.
+8. 使用 `epoch._is_strictly_before_same_scale` 拒绝同一 `TimeScale` 下早于同步时刻的机动；该助手解析已验证的日历分量和任意精度小数秒，不直接比较带 `Z` 的完整字符串；跨尺度返回 `None` 并保留给 Engine `prepare()`。
 
 - [ ] **Step 4: Run focused tests and quality checks**
 
@@ -666,7 +672,7 @@ git commit -m "feat(core): define simulation worlds"
 - Create: `packages/sycasphere-core/tests/test_schedules.py`
 
 **Interfaces:**
-- Consumes: `DefinitionString`, `Epoch`.
+- Consumes: `DefinitionString`, `Epoch`, `epoch._is_strictly_before_same_scale`.
 - Produces:
   - `SimulationTimeRange`
   - `OutputProduct`
@@ -676,7 +682,6 @@ git commit -m "feat(core): define simulation worlds"
   - `PeriodicObservationSchedule`
   - `ExplicitObservationSchedule`
   - `ObservationSchedule`
-  - `_is_strictly_before_same_scale(left: Epoch, right: Epoch) -> bool | None`
 
 - [ ] **Step 1: Write failing schedule tests**
 
@@ -821,7 +826,7 @@ type ObservationSchedule = Annotated[
 ]
 ```
 
-`_is_strictly_before_same_scale` returns `None` for different scales and otherwise compares canonical `Epoch.value` strings. Use it to reject reversed/equal same-scale ranges and explicit same-scale out-of-order epochs. Exact duplicate epochs are always rejected.
+Import and reuse `epoch._is_strictly_before_same_scale`; do not implement a second comparator in `schedules.py`. Use it to reject reversed/equal same-scale ranges and explicit same-scale out-of-order epochs. Exact duplicate epochs are always rejected. Different time scales return `None` and remain structurally valid for Engine comparison.
 
 Apply a `mode="before"` validator to `interval_s` and `cadence_s` that requires concrete built-in `float`; this is what rejects integers before Pydantic can widen them.
 
