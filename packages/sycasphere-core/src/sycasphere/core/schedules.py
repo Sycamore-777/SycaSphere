@@ -43,7 +43,7 @@ from pydantic import (
     model_validator,
 )
 from sycasphere.core._definitions import DefinitionString
-from sycasphere.core.epoch import Epoch, _is_strictly_before_same_scale
+from sycasphere.core.epoch import Epoch, TimeScale, _is_strictly_before_same_scale
 
 # =============================👐Seperate👐=============================
 # Shared strict numeric and epoch-order validation
@@ -178,11 +178,15 @@ class ExplicitObservationSchedule(_ObservationScheduleBase):
 
     @model_validator(mode="after")
     def validate_epochs(self) -> Self:
-        """Reject exact duplicates and reversed adjacent epochs in a shared time scale."""
+        """Reject exact duplicates and reversed same-scale epoch subsequences."""
         if len(self.epochs) != len(set(self.epochs)):
             raise ValueError("epochs must not contain duplicate values")
-        for left, right in zip(self.epochs, self.epochs[1:], strict=False):
-            _require_same_scale_strict_order(left, right, "explicit epochs")
+        previous_by_scale: dict[TimeScale, Epoch] = {}
+        for epoch in self.epochs:
+            previous = previous_by_scale.get(epoch.time_scale)
+            if previous is not None:
+                _require_same_scale_strict_order(previous, epoch, "explicit epochs")
+            previous_by_scale[epoch.time_scale] = epoch
         return self
 
 

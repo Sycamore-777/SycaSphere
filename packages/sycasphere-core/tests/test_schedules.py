@@ -197,10 +197,23 @@ def test_explicit_schedule_leaves_mixed_scale_ordering_to_engine() -> None:
         sensor_id="sensor-1",
         target_id="target-1",
         measurement_model_id="sycasphere.measurement.angles",
-        epochs=(EPOCH_10, tai_epoch, EPOCH_0),
+        epochs=(EPOCH_0, tai_epoch, EPOCH_10),
     )
 
-    assert schedule.epochs == (EPOCH_10, tai_epoch, EPOCH_0)
+    assert schedule.epochs == (EPOCH_0, tai_epoch, EPOCH_10)
+
+
+def test_explicit_schedule_rejects_reversed_same_scale_subsequence() -> None:
+    tai_epoch = Epoch(value="2026-07-25T23:59:59", time_scale=TimeScale.TAI)
+
+    with pytest.raises(ValidationError):
+        ExplicitObservationSchedule(
+            schedule_id="schedule-1",
+            sensor_id="sensor-1",
+            target_id="target-1",
+            measurement_model_id="sycasphere.measurement.angles",
+            epochs=(EPOCH_10, tai_epoch, EPOCH_0),
+        )
 
 
 def test_optional_schedule_references_round_trip_as_none() -> None:
