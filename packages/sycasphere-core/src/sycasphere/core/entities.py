@@ -49,6 +49,7 @@ from sycasphere.core._definitions import (
     _normalize_unique_strings,
 )
 from sycasphere.core.geometry import GeodeticLocation
+from sycasphere.core.maneuvers import ManeuverCapability
 from sycasphere.core.model_refs import ModelRef
 from sycasphere.core.sensors import SensorDefinition
 from sycasphere.core.states import CartesianState
@@ -150,6 +151,7 @@ class SpacecraftDefinition(_EntityDefinitionBase):
     dynamics_model: ModelRef
     attitude_model: ModelRef
     sensors: tuple[SensorDefinition, ...] = ()
+    maneuver_capability: ManeuverCapability | None = None
 
     @field_validator("sensors")
     @classmethod

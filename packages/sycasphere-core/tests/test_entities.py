@@ -52,6 +52,7 @@ from sycasphere.core.frames import (
     ReferenceEllipsoid,
 )
 from sycasphere.core.geometry import GeodeticLocation, RigidTransform, SensorAxes
+from sycasphere.core.maneuvers import ManeuverCapability, ManeuverType
 from sycasphere.core.model_refs import ModelRef
 from sycasphere.core.schema import SchemaVersion
 from sycasphere.core.sensors import SensorDefinition, SensorType
@@ -130,7 +131,9 @@ def _location() -> GeodeticLocation:
     )
 
 
-def _spacecraft() -> SpacecraftDefinition:
+def _spacecraft(
+    maneuver_capability: ManeuverCapability | None = None,
+) -> SpacecraftDefinition:
     return SpacecraftDefinition(
         id="spacecraft-1",
         name="Observer",
@@ -144,6 +147,7 @@ def _spacecraft() -> SpacecraftDefinition:
         dynamics_model=_model("sycasphere.dynamics.numerical"),
         attitude_model=_model("sycasphere.attitude.nadir"),
         sensors=[_sensor()],
+        maneuver_capability=maneuver_capability,
     )
 
 
@@ -164,6 +168,18 @@ def test_spacecraft_composes_state_physics_models_and_sensors() -> None:
     assert spacecraft.entity_type is EntityType.SPACECRAFT
     assert spacecraft.sensors[0].id == "sensor-1"
     assert spacecraft.initial_state.frame.kind is FrameKind.J2000
+
+
+def test_spacecraft_maneuver_capability_is_optional_and_strict() -> None:
+    spacecraft = _spacecraft(
+        maneuver_capability=ManeuverCapability(
+            supported_types=("IMPULSIVE",),
+            propulsion_model=_model("sycasphere.propulsion.impulsive"),
+        )
+    )
+
+    assert spacecraft.maneuver_capability is not None
+    assert spacecraft.maneuver_capability.supported_types == frozenset({ManeuverType.IMPULSIVE})
 
 
 @pytest.mark.parametrize(

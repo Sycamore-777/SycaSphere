@@ -557,6 +557,38 @@
         "type": "object"
       },
       "JsonValue": {},
+      "ManeuverCapability": {
+        "additionalProperties": false,
+        "description": "Immutable physical propulsion capability available to one spacecraft.",
+        "properties": {
+          "propulsion_model": {
+            "$ref": "#/$defs/ModelRef"
+          },
+          "supported_types": {
+            "items": {
+              "$ref": "#/$defs/ManeuverType"
+            },
+            "title": "Supported Types",
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "supported_types",
+          "propulsion_model"
+        ],
+        "title": "ManeuverCapability",
+        "type": "object"
+      },
+      "ManeuverType": {
+        "description": "Kinds of propulsive maneuver supported by the public Core contract.",
+        "enum": [
+          "IMPULSIVE",
+          "FINITE_BURN"
+        ],
+        "title": "ManeuverType",
+        "type": "string"
+      },
       "ModelRef": {
         "additionalProperties": false,
         "description": "A data-only reference to a configured scientific submodel.",
@@ -931,6 +963,17 @@
           },
           "initial_state": {
             "$ref": "#/$defs/CartesianState"
+          },
+          "maneuver_capability": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ManeuverCapability"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "metadata": {
             "additionalProperties": {
@@ -3353,6 +3396,38 @@
         "type": "object"
       },
       "JsonValue": {},
+      "ManeuverCapability": {
+        "additionalProperties": false,
+        "description": "Immutable physical propulsion capability available to one spacecraft.",
+        "properties": {
+          "propulsion_model": {
+            "$ref": "#/$defs/ModelRef"
+          },
+          "supported_types": {
+            "items": {
+              "$ref": "#/$defs/ManeuverType"
+            },
+            "title": "Supported Types",
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "supported_types",
+          "propulsion_model"
+        ],
+        "title": "ManeuverCapability",
+        "type": "object"
+      },
+      "ManeuverType": {
+        "description": "Kinds of propulsive maneuver supported by the public Core contract.",
+        "enum": [
+          "IMPULSIVE",
+          "FINITE_BURN"
+        ],
+        "title": "ManeuverType",
+        "type": "string"
+      },
       "ModelRef": {
         "additionalProperties": false,
         "description": "A data-only reference to a configured scientific submodel.",
@@ -3686,6 +3761,17 @@
       },
       "initial_state": {
         "$ref": "#/$defs/CartesianState"
+      },
+      "maneuver_capability": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ManeuverCapability"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
       },
       "metadata": {
         "additionalProperties": {
