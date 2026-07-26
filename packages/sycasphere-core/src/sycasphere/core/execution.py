@@ -454,7 +454,11 @@ class PreparedTimeline(BaseModel):
 class SimulationExecutionManifest(BaseModel):
     """Deterministic, immutable scientific execution inputs produced by prepare."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        revalidate_instances="always",
+    )
 
     schema_version: SchemaVersion
     source_request: SimulationRunRequest

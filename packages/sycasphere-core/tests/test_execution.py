@@ -1193,6 +1193,30 @@ def test_manifest_validation_revalidates_copied_source_request() -> None:
         SimulationExecutionManifest.model_validate(data)
 
 
+def test_manifest_validation_revalidates_existing_tampered_manifest_instance() -> None:
+    manifest = make_manifest()
+    invalid_source = manifest.source_request.model_copy(update={"random_seed": -1})
+    tampered = manifest.model_copy(
+        update={
+            "source_request": invalid_source,
+            "source_request_hash": sha256_canonical_json(invalid_source),
+            "simulation_definition_hash": sha256_canonical_json(
+                invalid_source.simulation_definition
+            ),
+        }
+    )
+    tampered = tampered.model_copy(
+        update={
+            "content_hash": sha256_canonical_json(
+                tampered.model_dump(mode="json", exclude={"content_hash"})
+            )
+        }
+    )
+
+    with pytest.raises(ValidationError, match="random_seed"):
+        SimulationExecutionManifest.model_validate(tampered)
+
+
 def test_manifest_create_revalidates_copied_nested_plugin_record() -> None:
     plugins = make_resolved_plugins()
     invalid_ref = plugins[0].ref.model_copy(update={"implementation_version": "not-semver"})
