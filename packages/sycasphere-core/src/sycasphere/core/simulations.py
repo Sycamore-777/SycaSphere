@@ -42,7 +42,7 @@ from sycasphere.core.entities import (
     OtherSpaceObjectDefinition,
     SpacecraftDefinition,
 )
-from sycasphere.core.epoch import Epoch
+from sycasphere.core.epoch import Epoch, _is_strictly_before_same_scale
 from sycasphere.core.maneuvers import PlannedTruthManeuver, _validate_maneuver_binding
 from sycasphere.core.model_refs import ModelRef
 
@@ -163,9 +163,9 @@ class SimulationDefinition(_DefinitionBase):
                 planned_maneuver.epoch,
                 target.maneuver_capability,
             )
-            if (
-                planned_maneuver.epoch.time_scale is self.synchronization_epoch.time_scale
-                and planned_maneuver.epoch.value < self.synchronization_epoch.value
+            if _is_strictly_before_same_scale(
+                planned_maneuver.epoch,
+                self.synchronization_epoch,
             ):
                 raise ValueError(
                     "planned maneuver epoch must not be earlier than synchronization_epoch"

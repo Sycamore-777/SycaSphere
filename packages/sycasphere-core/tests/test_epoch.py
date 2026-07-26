@@ -34,6 +34,7 @@ from types import MappingProxyType
 import pytest
 from pydantic import ValidationError
 from sycasphere.core import Epoch, TimeScale
+from sycasphere.core.epoch import _is_strictly_before_same_scale
 
 
 # =============================👐Seperate👐==============================
@@ -158,3 +159,30 @@ def test_epoch_json_round_trip_preserves_normalized_value_and_scale() -> None:
 
     assert Epoch.model_validate_json(epoch.model_dump_json()) == epoch
     assert epoch.model_dump(mode="json")["time_scale"] == "UTC"
+
+
+@pytest.mark.parametrize(
+    ("left_value", "right_value", "expected"),
+    [
+        ("2026-07-20T10:00:00Z", "2026-07-20T10:00:00.5Z", True),
+        ("2026-07-20T10:00:00.5Z", "2026-07-20T10:00:00Z", False),
+        ("2026-07-20T10:00:00.05Z", "2026-07-20T10:00:00.5Z", True),
+        ("2026-07-20T10:00:00.5Z", "2026-07-20T10:00:00.500Z", False),
+    ],
+)
+def test_same_scale_epoch_comparison_uses_calendar_components_and_fraction(
+    left_value: str,
+    right_value: str,
+    expected: bool,
+) -> None:
+    left = Epoch(value=left_value, time_scale=TimeScale.UTC)
+    right = Epoch(value=right_value, time_scale=TimeScale.UTC)
+
+    assert _is_strictly_before_same_scale(left, right) is expected
+
+
+def test_same_scale_epoch_comparison_defers_cross_time_scale_ordering() -> None:
+    utc_epoch = Epoch(value="2026-07-20T10:00:00Z", time_scale=TimeScale.UTC)
+    tai_epoch = Epoch(value="2026-07-20T10:00:00", time_scale=TimeScale.TAI)
+
+    assert _is_strictly_before_same_scale(utc_epoch, tai_epoch) is None

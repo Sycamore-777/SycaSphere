@@ -6,8 +6,8 @@
 文件名    : epoch.py
 创建者    : Sycamore
 创建日期  : 2026-07-20
-最后修改  : 2026-07-20
-版本号    : v1.1.0
+最后修改  : 2026-07-26
+版本号    : v1.2.0
 
 ■ 用途说明:
   定义带显式时间尺度的不可变 Epoch 边界模型，并规范化 UTC 字符串。
@@ -21,6 +21,7 @@
   ✓ 仅以受限语法接受 Z 后缀闰秒字符串。
 
 ■ 更新日志:
+  v1.2.0 (2026-07-26): 新增同时间尺度的精确日历时刻比较。
   v1.1.0 (2026-07-20): 将公共字段改为 time_scale 并封装 UTC 日期边界溢出。
   v1.0.0 (2026-07-20): 创建带时间尺度的 Epoch 契约。
 
@@ -62,6 +63,35 @@ class TimeScale(StrEnum):
     UTC = "UTC"
     TAI = "TAI"
     TT = "TT"
+
+
+def _epoch_calendar_key(epoch: Epoch) -> tuple[int, int, int, int, int, int, tuple[int, ...]]:
+    """Return a comparable canonical calendar key without converting time scales."""
+    calendar_value = (
+        epoch.value.removesuffix("Z") if epoch.time_scale is TimeScale.UTC else epoch.value
+    )
+    match = _CALENDAR_PATTERN.fullmatch(calendar_value)
+    if match is None:
+        raise ValueError("Epoch value must be a normalized calendar string")
+
+    fraction = match["fraction"]
+    fraction_digits = tuple(int(digit) for digit in fraction[1:]) if fraction else ()
+    return (
+        int(match["date"][:4]),
+        int(match["date"][5:7]),
+        int(match["date"][8:10]),
+        int(match["hour"]),
+        int(match["minute"]),
+        int(match["second"]),
+        fraction_digits,
+    )
+
+
+def _is_strictly_before_same_scale(left: Epoch, right: Epoch) -> bool | None:
+    """Compare canonical epochs only when their explicitly declared scales match."""
+    if left.time_scale is not right.time_scale:
+        return None
+    return _epoch_calendar_key(left) < _epoch_calendar_key(right)
 
 
 def _canonical_fraction(fraction: str | None) -> str:

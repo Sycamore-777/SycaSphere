@@ -393,6 +393,53 @@ def test_simulation_rejects_earlier_same_scale_planned_maneuver() -> None:
         SimulationDefinition.model_validate(data)
 
 
+def test_simulation_accepts_later_fractional_second_same_scale_maneuver() -> None:
+    definition = make_simulation_definition()
+    data = definition.model_dump(mode="python")
+    later = definition.planned_maneuvers[0].model_copy(
+        update={"epoch": Epoch(value="2026-07-26T00:00:00.5Z", time_scale=TimeScale.UTC)}
+    )
+    data["planned_maneuvers"] = (later,)
+
+    assert SimulationDefinition.model_validate(data).planned_maneuvers == (later,)
+
+
+def test_simulation_rejects_earlier_fractional_second_same_scale_maneuver() -> None:
+    definition = make_simulation_definition()
+    synchronization_epoch = Epoch(value="2026-07-26T00:00:00.5Z", time_scale=TimeScale.UTC)
+    data = definition.model_dump(mode="python")
+    spacecraft = definition.entities[0]
+    assert isinstance(spacecraft, SpacecraftDefinition)
+    data["synchronization_epoch"] = synchronization_epoch
+    data["entities"] = (
+        spacecraft.model_copy(
+            update={
+                "initial_state": spacecraft.initial_state.model_copy(
+                    update={"epoch": synchronization_epoch}
+                )
+            }
+        ),
+        *definition.entities[1:],
+    )
+    data["planned_maneuvers"] = (
+        definition.planned_maneuvers[0].model_copy(update={"epoch": EPOCH}),
+    )
+
+    with pytest.raises(ValidationError, match="earlier"):
+        SimulationDefinition.model_validate(data)
+
+
+def test_simulation_leaves_cross_time_scale_maneuver_ordering_to_engine() -> None:
+    definition = make_simulation_definition()
+    data = definition.model_dump(mode="python")
+    cross_scale = definition.planned_maneuvers[0].model_copy(
+        update={"epoch": Epoch(value="2026-07-25T23:59:59", time_scale=TimeScale.TAI)}
+    )
+    data["planned_maneuvers"] = (cross_scale,)
+
+    assert SimulationDefinition.model_validate(data).planned_maneuvers == (cross_scale,)
+
+
 def test_simulation_keeps_source_collections_immutable() -> None:
     entities = [make_spacecraft()]
     model_refs = [make_model("sycasphere.environment.gravity")]
