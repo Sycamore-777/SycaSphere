@@ -7,23 +7,26 @@
 创建者    : Sycamore
 创建日期  : 2026-07-26
 最后修改  : 2026-07-26
-版本号    : v1.0.0
+版本号    : v1.1.0
 
 ■ 用途说明:
-  验证自包含仿真运行请求的序列化、引用解析、能力、时间与输出一致性约束。
+  验证自包含仿真运行请求及不可变执行清单的确定性、完整性和边界一致性约束。
 
 ■ 主要函数功能:
   - make_request: 构造包含物理世界、调度、采样、后端和输出需求的有效请求
-  - 运行请求测试: 覆盖严格输入、跨引用、深度不可变配置及边界一致性
+  - make_manifest: 构造排序稳定、哈希闭合且可重复的科学执行输入清单
+  - 契约测试: 覆盖严格输入、跨引用、深度不可变配置及清单完整性
 
 ■ 功能特性:
   ✓ 验证运行请求不依赖数据库引用、路径或运行状态
   ✓ 验证传感器模型、链路模型、机动能力和输出采样的闭合引用
+  ✓ 验证执行清单哈希、排序、输入快照和篡改检测
 
 ■ 待办事项:
   - 无
 
 ■ 更新日志:
+  v1.1.0 (2026-07-26): 增加不可变仿真执行清单契约测试
   v1.0.0 (2026-07-26): 创建 SimulationRunRequest 契约测试
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -34,7 +37,8 @@ from __future__ import annotations
 import math
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
+from sycasphere.core._canonical import sha256_canonical_json
 from sycasphere.core.entities import (
     GroundStationDefinition,
     OtherSpaceObjectDefinition,
@@ -43,8 +47,15 @@ from sycasphere.core.entities import (
 )
 from sycasphere.core.epoch import Epoch, TimeScale
 from sycasphere.core.execution import (
+    DerivedRandomStream,
+    EventOrderingPolicy,
     OutputRequirement,
+    PreparedManeuverEntry,
+    PreparedManeuverSource,
+    PreparedTimeline,
+    ResolvedPluginRecord,
     ScienceBackendBinding,
+    SimulationExecutionManifest,
     SimulationRunRequest,
 )
 from sycasphere.core.frames import (
@@ -64,7 +75,7 @@ from sycasphere.core.maneuvers import (
     PlannedTruthManeuver,
 )
 from sycasphere.core.model_refs import ModelRef
-from sycasphere.core.plugins import PluginRef
+from sycasphere.core.plugins import PluginKind, PluginRef
 from sycasphere.core.schedules import (
     ExplicitObservationSchedule,
     OutputProduct,
@@ -78,6 +89,7 @@ from sycasphere.core.sensors import SensorDefinition, SensorType
 from sycasphere.core.simulations import (
     CentralBody,
     EnvironmentDefinition,
+    ExternalDataRef,
     SimulationDefinition,
 )
 from sycasphere.core.states import CartesianState
@@ -87,6 +99,9 @@ SYNCHRONIZATION_EPOCH = Epoch(value="2026-07-26T00:00:00Z", time_scale=TimeScale
 START_EPOCH = Epoch(value="2026-07-26T00:00:10Z", time_scale=TimeScale.UTC)
 SCHEDULE_END_EPOCH = Epoch(value="2026-07-26T00:00:50Z", time_scale=TimeScale.UTC)
 END_EPOCH = Epoch(value="2026-07-26T00:01:00Z", time_scale=TimeScale.UTC)
+SHA_A = "a" * 64
+SHA_B = "b" * 64
+SHA_C = "c" * 64
 
 
 # =============================👐Seperate👐=============================
@@ -696,3 +711,519 @@ def test_each_sampled_output_requires_its_sampling_rule(
 
     with pytest.raises(ValidationError, match=product.value):
         SimulationRunRequest.model_validate(data)
+
+
+# =============================👐Seperate👐=============================
+# Immutable simulation execution manifest fixtures
+# =============================👐Seperate👐=============================
+def make_manifest_request(
+    *,
+    random_seed: int = 42,
+    backend_configuration: object | None = None,
+    two_schedules: bool = False,
+) -> SimulationRunRequest:
+    """Return a request whose planned and commanded maneuvers are prepared."""
+    request = make_request()
+    data = request.model_dump(mode="python")
+    data["random_seed"] = random_seed
+    data["command_timeline"] = (make_impulsive_command(),)
+
+    if backend_configuration is not None:
+        data["backend"] = ScienceBackendBinding(
+            ref=request.backend.ref,
+            configuration=backend_configuration,
+        )
+
+    if two_schedules:
+        second = request.observation_schedules[0].model_copy(update={"schedule_id": "schedule-0"})
+        data["observation_schedules"] = (
+            request.observation_schedules[0],
+            second,
+        )
+
+    return SimulationRunRequest.model_validate(data)
+
+
+def make_resolved_plugin(
+    component_id: str,
+    *,
+    kind: PluginKind,
+    plugin_id: str,
+    implementation_version: str = "1.0.0",
+    configuration_hash: str = SHA_A,
+) -> ResolvedPluginRecord:
+    """Return one exact, content-addressed resolved plugin record."""
+    return ResolvedPluginRecord(
+        component_id=component_id,
+        kind=kind,
+        ref=PluginRef(
+            plugin_id=plugin_id,
+            implementation_version=implementation_version,
+            interface_version=SCHEMA_VERSION,
+        ),
+        configuration_hash=configuration_hash,
+    )
+
+
+def make_resolved_plugins() -> tuple[ResolvedPluginRecord, ...]:
+    """Return deliberately unsorted plugin records."""
+    return (
+        make_resolved_plugin(
+            "measurement",
+            kind=PluginKind.MEASUREMENT_MODEL,
+            plugin_id="sycasphere.measurement",
+            configuration_hash=SHA_B,
+        ),
+        make_resolved_plugin(
+            "backend",
+            kind=PluginKind.SCIENCE_BACKEND,
+            plugin_id="sycasphere.orekit",
+        ),
+    )
+
+
+def make_external_data() -> tuple[ExternalDataRef, ...]:
+    """Return deliberately unsorted resolved external scientific data."""
+    return (
+        ExternalDataRef(data_id="z-eop", version="2026-07", sha256=SHA_C),
+        ExternalDataRef(data_id="a-leap-seconds", version="2026-01", sha256=SHA_B),
+    )
+
+
+def make_random_streams() -> tuple[DerivedRandomStream, ...]:
+    """Return deliberately unsorted deterministic random-stream records."""
+    return (
+        DerivedRandomStream(
+            component_id="sensor-1",
+            purpose="reported-noise",
+            interface_version=SCHEMA_VERSION,
+            derived_seed=10,
+        ),
+        DerivedRandomStream(
+            component_id="backend",
+            purpose="propagation",
+            interface_version=SCHEMA_VERSION,
+            derived_seed=20,
+        ),
+    )
+
+
+def make_prepared_timeline(request: SimulationRunRequest) -> PreparedTimeline:
+    """Return the compact prepared timeline corresponding to one request."""
+    planned = request.simulation_definition.planned_maneuvers[0]
+    command = request.command_timeline[0]
+    return PreparedTimeline(
+        maneuvers=(
+            PreparedManeuverEntry(
+                order_index=0,
+                source=PreparedManeuverSource.PLANNED,
+                event_id=planned.maneuver_id,
+                spacecraft_id=planned.spacecraft_id,
+                epoch=planned.epoch,
+                maneuver=planned.maneuver,
+            ),
+            PreparedManeuverEntry(
+                order_index=1,
+                source=PreparedManeuverSource.COMMAND,
+                event_id=command.command_id,
+                spacecraft_id=command.spacecraft_id,
+                epoch=command.epoch,
+                maneuver=command.maneuver,
+            ),
+        ),
+        observation_schedules=tuple(reversed(request.observation_schedules)),
+        output_sampling=request.output_sampling,
+    )
+
+
+def make_manifest(
+    *,
+    source_request: SimulationRunRequest | None = None,
+    resolved_plugins: tuple[ResolvedPluginRecord, ...] | None = None,
+    resolved_external_data: tuple[ExternalDataRef, ...] | None = None,
+    derived_random_streams: tuple[DerivedRandomStream, ...] | None = None,
+    prepared_timeline: PreparedTimeline | None = None,
+) -> SimulationExecutionManifest:
+    """Create one deterministic immutable simulation execution manifest."""
+    request = make_manifest_request() if source_request is None else source_request
+    return SimulationExecutionManifest.create(
+        schema_version=SCHEMA_VERSION,
+        source_request=request,
+        resolved_plugins=(
+            make_resolved_plugins() if resolved_plugins is None else resolved_plugins
+        ),
+        resolved_external_data=(
+            make_external_data() if resolved_external_data is None else resolved_external_data
+        ),
+        derived_random_streams=(
+            make_random_streams() if derived_random_streams is None else derived_random_streams
+        ),
+        prepared_timeline=(
+            make_prepared_timeline(request) if prepared_timeline is None else prepared_timeline
+        ),
+    )
+
+
+# =============================👐Seperate👐=============================
+# Manifest hashes, deterministic ordering, and immutable shape
+# =============================👐Seperate👐=============================
+def test_manifest_create_computes_all_three_hashes_and_fixed_versions() -> None:
+    manifest = make_manifest()
+
+    assert manifest.source_request_hash == sha256_canonical_json(manifest.source_request)
+    assert manifest.simulation_definition_hash == sha256_canonical_json(
+        manifest.source_request.simulation_definition
+    )
+    assert manifest.canonicalization_version == "SYCASPHERE_CANONICAL_JSON_V1"
+    assert manifest.random_derivation_version == "SYCASPHERE_SEED_V1"
+    assert manifest.event_ordering_policy is EventOrderingPolicy.POST_MANEUVER_OBSERVATION_V1
+    assert manifest.content_hash == sha256_canonical_json(
+        manifest.model_dump(mode="json", exclude={"content_hash"})
+    )
+
+
+def test_equivalent_inputs_create_byte_equivalent_manifests() -> None:
+    first = make_manifest()
+    second = make_manifest()
+
+    assert first.model_dump_json() == second.model_dump_json()
+    assert first.content_hash == second.content_hash
+
+
+def test_manifest_records_and_prepared_schedules_sort_deterministically() -> None:
+    request = make_manifest_request(two_schedules=True)
+    manifest = make_manifest(source_request=request)
+
+    assert [record.component_id for record in manifest.resolved_plugins] == [
+        "backend",
+        "measurement",
+    ]
+    assert [record.data_id for record in manifest.resolved_external_data] == [
+        "a-leap-seconds",
+        "z-eop",
+    ]
+    assert [
+        (stream.component_id, stream.purpose) for stream in manifest.derived_random_streams
+    ] == [
+        ("backend", "propagation"),
+        ("sensor-1", "reported-noise"),
+    ]
+    assert [
+        schedule.schedule_id for schedule in manifest.prepared_timeline.observation_schedules
+    ] == ["schedule-0", "schedule-1"]
+
+
+def test_manifest_expected_outputs_equal_request_and_serialize_in_value_order() -> None:
+    manifest = make_manifest()
+
+    assert manifest.expected_outputs == manifest.source_request.output_requirements
+    assert manifest.model_dump(mode="json")["expected_outputs"] == [
+        "IDEAL_OBSERVATIONS",
+        "TRUTH",
+    ]
+
+
+def test_manifest_and_source_request_are_frozen() -> None:
+    manifest = make_manifest()
+
+    with pytest.raises(ValidationError):
+        manifest.content_hash = SHA_A
+    with pytest.raises(ValidationError):
+        manifest.source_request.random_seed = 43
+
+
+@pytest.mark.parametrize(
+    "model_type",
+    [
+        ResolvedPluginRecord,
+        DerivedRandomStream,
+        PreparedManeuverEntry,
+        PreparedTimeline,
+        SimulationExecutionManifest,
+    ],
+)
+def test_manifest_public_models_are_frozen_and_extra_forbid(
+    model_type: type[BaseModel],
+) -> None:
+    assert model_type.model_config["frozen"] is True
+    assert model_type.model_config["extra"] == "forbid"
+
+
+def test_manifest_contains_no_runtime_lifecycle_or_path_fields() -> None:
+    fields = set(SimulationExecutionManifest.model_fields)
+
+    assert fields.isdisjoint(
+        {
+            "prepared_at",
+            "started_at",
+            "ended_at",
+            "status",
+            "error",
+            "output_hashes",
+            "output_path",
+            "runtime_command_journal",
+        }
+    )
+
+
+def test_prepared_timeline_is_compact_for_periodic_schedules() -> None:
+    manifest = make_manifest()
+    serialized = manifest.prepared_timeline.model_dump(mode="json")
+
+    assert serialized["observation_schedules"][0]["schedule_type"] == "PERIODIC"
+    assert "expanded_epochs" not in serialized
+
+
+# =============================👐Seperate👐=============================
+# Manifest integrity, identity, and source equivalence validation
+# =============================👐Seperate👐=============================
+@pytest.mark.parametrize(
+    "field_name",
+    ["source_request_hash", "simulation_definition_hash", "content_hash"],
+)
+def test_manifest_rejects_tampered_source_definition_or_content_hash(
+    field_name: str,
+) -> None:
+    manifest = make_manifest()
+    data = manifest.model_dump(mode="python")
+    data[field_name] = "0" * 64
+
+    with pytest.raises(ValidationError, match=field_name):
+        SimulationExecutionManifest.model_validate(data)
+
+
+@pytest.mark.parametrize("invalid_hash", ["a" * 63, "A" * 64, "g" * 64])
+def test_all_manifest_hash_fields_require_64_lowercase_hexadecimal_characters(
+    invalid_hash: str,
+) -> None:
+    with pytest.raises(ValidationError, match="configuration_hash"):
+        make_resolved_plugin(
+            "backend",
+            kind=PluginKind.SCIENCE_BACKEND,
+            plugin_id="sycasphere.orekit",
+            configuration_hash=invalid_hash,
+        )
+
+    with pytest.raises(ValidationError, match="sha256"):
+        ExternalDataRef(data_id="eop", version="v1", sha256=invalid_hash)
+
+    data = make_manifest().model_dump(mode="python")
+    for field_name in (
+        "source_request_hash",
+        "simulation_definition_hash",
+        "content_hash",
+    ):
+        invalid = {**data, field_name: invalid_hash}
+        with pytest.raises(ValidationError, match=field_name):
+            SimulationExecutionManifest.model_validate(invalid)
+
+
+def test_manifest_rejects_duplicate_resolved_plugin_component_ids() -> None:
+    plugins = make_resolved_plugins()
+    duplicate = plugins[0].model_copy(update={"component_id": plugins[1].component_id})
+
+    with pytest.raises(ValidationError, match="component_id"):
+        make_manifest(resolved_plugins=(*plugins, duplicate))
+
+
+def test_manifest_rejects_duplicate_external_data_ids() -> None:
+    data = make_external_data()
+    duplicate = data[0].model_copy(update={"version": "other-version", "sha256": SHA_A})
+
+    with pytest.raises(ValidationError, match="data_id"):
+        make_manifest(resolved_external_data=(*data, duplicate))
+
+
+def test_manifest_rejects_duplicate_derived_stream_identities() -> None:
+    streams = make_random_streams()
+    duplicate = streams[0].model_copy(update={"derived_seed": 99})
+
+    with pytest.raises(ValidationError, match=r"component_id.*purpose"):
+        make_manifest(derived_random_streams=(*streams, duplicate))
+
+
+@pytest.mark.parametrize("order_indices", [(1, 2), (1, 0), (0, 0)])
+def test_prepared_maneuver_order_indices_are_exactly_consecutive(
+    order_indices: tuple[int, int],
+) -> None:
+    timeline = make_prepared_timeline(make_manifest_request())
+    maneuvers = tuple(
+        entry.model_copy(update={"order_index": order_index})
+        for entry, order_index in zip(timeline.maneuvers, order_indices, strict=True)
+    )
+
+    with pytest.raises(ValidationError, match="order_index"):
+        PreparedTimeline(
+            maneuvers=maneuvers,
+            observation_schedules=timeline.observation_schedules,
+            output_sampling=timeline.output_sampling,
+        )
+
+
+def test_prepared_timeline_rejects_duplicate_maneuver_event_ids() -> None:
+    timeline = make_prepared_timeline(make_manifest_request())
+    duplicate = timeline.maneuvers[1].model_copy(
+        update={"event_id": timeline.maneuvers[0].event_id}
+    )
+
+    with pytest.raises(ValidationError, match="event_id"):
+        PreparedTimeline(
+            maneuvers=(timeline.maneuvers[0], duplicate),
+            observation_schedules=timeline.observation_schedules,
+            output_sampling=timeline.output_sampling,
+        )
+
+
+def test_prepared_timeline_rejects_duplicate_schedule_ids() -> None:
+    request = make_manifest_request()
+    schedule = request.observation_schedules[0]
+
+    with pytest.raises(ValidationError, match="schedule_id"):
+        PreparedTimeline(
+            observation_schedules=(schedule, schedule),
+            output_sampling=request.output_sampling,
+        )
+
+
+def test_manifest_requires_prepared_schedule_ids_to_equal_source_request_ids() -> None:
+    request = make_manifest_request()
+    timeline = make_prepared_timeline(request)
+    other_schedule = request.observation_schedules[0].model_copy(
+        update={"schedule_id": "other-schedule"}
+    )
+    mismatched = PreparedTimeline(
+        maneuvers=timeline.maneuvers,
+        observation_schedules=(other_schedule,),
+        output_sampling=timeline.output_sampling,
+    )
+
+    with pytest.raises(ValidationError, match="schedule_id"):
+        make_manifest(source_request=request, prepared_timeline=mismatched)
+
+
+def test_manifest_requires_prepared_sampling_to_equal_source_request_sampling() -> None:
+    request = make_manifest_request()
+    timeline = make_prepared_timeline(request)
+    mismatched = PreparedTimeline(
+        maneuvers=timeline.maneuvers,
+        observation_schedules=timeline.observation_schedules,
+        output_sampling=OutputSampling(),
+    )
+
+    with pytest.raises(ValidationError, match="output_sampling"):
+        make_manifest(source_request=request, prepared_timeline=mismatched)
+
+
+def test_manifest_rejects_expected_outputs_different_from_source_request() -> None:
+    manifest = make_manifest()
+    data = manifest.model_dump(mode="python")
+    data["expected_outputs"] = (OutputRequirement.TRUTH,)
+
+    with pytest.raises(ValidationError, match="expected_outputs"):
+        SimulationExecutionManifest.model_validate(data)
+
+
+# =============================👐Seperate👐=============================
+# Canonical hash sensitivity and trusted-instance isolation
+# =============================👐Seperate👐=============================
+@pytest.mark.parametrize(
+    "changed_input",
+    ["plugin-version", "external-data-hash", "seed", "backend-configuration"],
+)
+def test_scientific_input_changes_modify_manifest_content_hash(
+    changed_input: str,
+) -> None:
+    baseline = make_manifest()
+
+    if changed_input == "plugin-version":
+        plugins = make_resolved_plugins()
+        changed_ref = plugins[0].ref.model_copy(update={"implementation_version": "1.0.1"})
+        changed_plugins = (
+            plugins[0].model_copy(update={"ref": changed_ref}),
+            plugins[1],
+        )
+        changed = make_manifest(resolved_plugins=changed_plugins)
+    elif changed_input == "external-data-hash":
+        data = make_external_data()
+        changed = make_manifest(
+            resolved_external_data=(data[0].model_copy(update={"sha256": SHA_A}), data[1])
+        )
+    elif changed_input == "seed":
+        changed = make_manifest(source_request=make_manifest_request(random_seed=43))
+    else:
+        changed = make_manifest(
+            source_request=make_manifest_request(
+                backend_configuration={"integrator": {"kind": "DOP853", "max_step_s": 30.0}}
+            )
+        )
+
+    assert changed.content_hash != baseline.content_hash
+
+
+def test_negative_and_positive_zero_have_equal_canonical_manifest_hashes() -> None:
+    negative = make_manifest(
+        source_request=make_manifest_request(
+            backend_configuration={"integrator": {"signed_zero": -0.0}}
+        )
+    )
+    positive = make_manifest(
+        source_request=make_manifest_request(
+            backend_configuration={"integrator": {"signed_zero": 0.0}}
+        )
+    )
+
+    assert negative.source_request_hash == positive.source_request_hash
+    assert negative.simulation_definition_hash == positive.simulation_definition_hash
+    assert negative.content_hash == positive.content_hash
+
+
+def test_manifest_create_revalidates_copied_source_request() -> None:
+    invalid_request = make_manifest_request().model_copy(update={"random_seed": -1})
+
+    with pytest.raises(ValidationError, match="random_seed"):
+        make_manifest(source_request=invalid_request)
+
+
+def test_manifest_validation_revalidates_copied_source_request() -> None:
+    manifest = make_manifest()
+    data = manifest.model_dump(mode="python")
+    data["source_request"] = manifest.source_request.model_copy(update={"random_seed": -1})
+
+    with pytest.raises(ValidationError, match="random_seed"):
+        SimulationExecutionManifest.model_validate(data)
+
+
+def test_manifest_create_revalidates_copied_nested_plugin_record() -> None:
+    plugins = make_resolved_plugins()
+    invalid_ref = plugins[0].ref.model_copy(update={"implementation_version": "not-semver"})
+    invalid_plugin = plugins[0].model_copy(update={"ref": invalid_ref})
+
+    with pytest.raises(ValidationError, match="implementation_version"):
+        make_manifest(resolved_plugins=(invalid_plugin, plugins[1]))
+
+
+def test_manifest_validation_revalidates_copied_nested_plugin_record() -> None:
+    manifest = make_manifest()
+    invalid = manifest.resolved_plugins[0].model_copy(update={"configuration_hash": "not-a-hash"})
+    data = manifest.model_dump(mode="python")
+    data["resolved_plugins"] = (invalid, manifest.resolved_plugins[1])
+
+    with pytest.raises(ValidationError, match="configuration_hash"):
+        SimulationExecutionManifest.model_validate(data)
+
+
+def test_manifest_snapshots_mutable_aliases_in_copied_source_request() -> None:
+    request = make_manifest_request()
+    mutable_configuration = {"integrator": {"steps": [1.0, 2.0]}}
+    copied_backend = request.backend.model_copy(update={"configuration": mutable_configuration})
+    copied_request = request.model_copy(update={"backend": copied_backend})
+
+    manifest = make_manifest(source_request=copied_request)
+    mutable_configuration["integrator"]["steps"].append(3.0)
+
+    assert manifest.source_request is not copied_request
+    assert manifest.source_request.backend is not copied_backend
+    assert manifest.source_request.backend.configuration["integrator"]["steps"] == (
+        1.0,
+        2.0,
+    )

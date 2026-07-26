@@ -7,23 +7,26 @@
 创建者    : Sycamore
 创建日期  : 2026-07-26
 最后修改  : 2026-07-26
-版本号    : v1.0.0
+版本号    : v1.1.0
 
 ■ 用途说明:
-  定义独立仿真引擎可直接验证和执行的自包含、不可变运行输入边界。
+  定义独立仿真引擎可直接验证、准备和执行的自包含不可变科学输入边界。
 
 ■ 主要函数功能:
   - ScienceBackendBinding: 绑定精确科学后端版本及有限 JSON 配置
   - SimulationRunRequest: 校验物理世界、调度、命令、采样和输出的闭合一致性
+  - SimulationExecutionManifest.create: 冻结解析结果并计算确定性内容哈希
 
 ■ 功能特性:
   ✓ 嵌入完整 SimulationDefinition 并解析所有运行期科学引用
   ✓ 严格验证无符号随机种子、机动能力、时间范围和输出采样
+  ✓ 生成排序稳定、可重验且不含运行生命周期状态的科学执行清单
 
 ■ 待办事项:
   - 无
 
 ■ 更新日志:
+  v1.1.0 (2026-07-26): 增加不可变仿真执行清单、解析记录和完整性校验
   v1.0.0 (2026-07-26): 创建自包含仿真运行请求契约
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -33,7 +36,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -41,10 +44,17 @@ from pydantic import (
     Field,
     JsonValue,
     Strict,
+    StringConstraints,
     field_serializer,
     field_validator,
     model_validator,
 )
+from sycasphere.core._canonical import (
+    CANONICALIZATION_VERSION,
+    RANDOM_DERIVATION_VERSION,
+    sha256_canonical_json,
+)
+from sycasphere.core._definitions import DefinitionString
 from sycasphere.core._json import (
     FrozenJsonValue,
     freeze_json_object,
@@ -57,9 +67,13 @@ from sycasphere.core.entities import (
     SpacecraftDefinition,
 )
 from sycasphere.core.epoch import Epoch, _is_strictly_before_same_scale
-from sycasphere.core.maneuvers import ManeuverCommand, _validate_maneuver_binding
+from sycasphere.core.maneuvers import (
+    ManeuverCommand,
+    ManeuverSpec,
+    _validate_maneuver_binding,
+)
 from sycasphere.core.model_refs import ModelRef
-from sycasphere.core.plugins import PluginRef
+from sycasphere.core.plugins import PluginKind, PluginRef
 from sycasphere.core.schedules import (
     ExplicitObservationSchedule,
     ObservationSchedule,
@@ -70,13 +84,36 @@ from sycasphere.core.schedules import (
 )
 from sycasphere.core.schema import SchemaVersion
 from sycasphere.core.sensors import SensorDefinition
-from sycasphere.core.simulations import SimulationDefinition
+from sycasphere.core.simulations import ExternalDataRef, SimulationDefinition
 
 type UInt64 = Annotated[
     int,
     Strict(),
     Field(ge=0, le=2**64 - 1),
 ]
+type Sha256Hex = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=r"^[0-9a-f]{64}$"),
+]
+type StrictNonNegativeInt = Annotated[
+    int,
+    Strict(),
+    Field(ge=0),
+]
+
+
+def _snapshot_model_input(value: Any) -> Any:
+    """Convert a Pydantic instance to ordinary Python data for boundary revalidation."""
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="python")
+    return value
+
+
+def _snapshot_model_collection(value: Any) -> Any:
+    """Snapshot every Pydantic item in a supported collection input."""
+    if isinstance(value, (frozenset, list, set, tuple)):
+        return tuple(_snapshot_model_input(item) for item in value)
+    return value
 
 
 # =============================👐Seperate👐=============================
@@ -311,3 +348,318 @@ class SimulationRunRequest(BaseModel):
                 )
 
         return self
+
+
+# =============================👐Seperate👐=============================
+# Prepared timeline and resolved scientific inputs
+# =============================👐Seperate👐=============================
+class ResolvedPluginRecord(BaseModel):
+    """One exact plugin implementation and configuration selected for execution."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    component_id: DefinitionString
+    kind: PluginKind
+    ref: PluginRef
+    configuration_hash: Sha256Hex
+
+
+class DerivedRandomStream(BaseModel):
+    """One deterministic random stream derived for a stable component purpose."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    component_id: DefinitionString
+    purpose: DefinitionString
+    interface_version: SchemaVersion
+    derived_seed: UInt64
+
+
+class PreparedManeuverSource(StrEnum):
+    """Origin of one maneuver in the prepared event timeline."""
+
+    PLANNED = "PLANNED"
+    COMMAND = "COMMAND"
+
+
+class PreparedManeuverEntry(BaseModel):
+    """One engine-ordered planned or commanded maneuver."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    order_index: StrictNonNegativeInt
+    source: PreparedManeuverSource
+    event_id: DefinitionString
+    spacecraft_id: DefinitionString
+    epoch: Epoch
+    maneuver: ManeuverSpec
+
+
+class EventOrderingPolicy(StrEnum):
+    """Versioned event-ordering rules frozen into an execution manifest."""
+
+    POST_MANEUVER_OBSERVATION_V1 = "POST_MANEUVER_OBSERVATION_V1"
+
+
+class PreparedTimeline(BaseModel):
+    """Compact, validated event and sampling inputs produced during preparation."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    maneuvers: tuple[PreparedManeuverEntry, ...] = ()
+    observation_schedules: tuple[ObservationSchedule, ...] = ()
+    output_sampling: OutputSampling
+
+    @field_validator("maneuvers", "observation_schedules", mode="before")
+    @classmethod
+    def snapshot_timeline_records(cls, value: Any) -> Any:
+        """Revalidate copied nested records instead of trusting Pydantic instances."""
+        return _snapshot_model_collection(value)
+
+    @field_validator("output_sampling", mode="before")
+    @classmethod
+    def snapshot_output_sampling(cls, value: Any) -> Any:
+        """Copy and revalidate prepared sampling rules at the timeline boundary."""
+        return _snapshot_model_input(value)
+
+    @field_validator("observation_schedules")
+    @classmethod
+    def order_observation_schedules(
+        cls,
+        value: tuple[ObservationSchedule, ...],
+    ) -> tuple[ObservationSchedule, ...]:
+        """Serialize prepared schedules in stable schedule-ID order."""
+        return tuple(sorted(value, key=lambda item: item.schedule_id))
+
+    @model_validator(mode="after")
+    def validate_timeline_identities(self) -> Self:
+        """Require exact maneuver ordering and unique event and schedule identities."""
+        order_indices = tuple(entry.order_index for entry in self.maneuvers)
+        if order_indices != tuple(range(len(self.maneuvers))):
+            raise ValueError("maneuver order_index values must be exactly 0..n-1")
+
+        event_ids = tuple(entry.event_id for entry in self.maneuvers)
+        if len(event_ids) != len(set(event_ids)):
+            raise ValueError("maneuvers must contain unique event_id values")
+
+        schedule_ids = tuple(schedule.schedule_id for schedule in self.observation_schedules)
+        if len(schedule_ids) != len(set(schedule_ids)):
+            raise ValueError("observation_schedules must contain unique schedule_id values")
+        return self
+
+
+# =============================👐Seperate👐=============================
+# Immutable simulation execution manifest
+# =============================👐Seperate👐=============================
+class SimulationExecutionManifest(BaseModel):
+    """Deterministic, immutable scientific execution inputs produced by prepare."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: SchemaVersion
+    source_request: SimulationRunRequest
+    source_request_hash: Sha256Hex
+    simulation_definition_hash: Sha256Hex
+    resolved_plugins: tuple[ResolvedPluginRecord, ...]
+    resolved_external_data: tuple[ExternalDataRef, ...]
+    derived_random_streams: tuple[DerivedRandomStream, ...]
+    random_derivation_version: Literal["SYCASPHERE_SEED_V1"]
+    prepared_timeline: PreparedTimeline
+    event_ordering_policy: Literal[EventOrderingPolicy.POST_MANEUVER_OBSERVATION_V1]
+    expected_outputs: frozenset[OutputRequirement]
+    canonicalization_version: Literal["SYCASPHERE_CANONICAL_JSON_V1"]
+    content_hash: Sha256Hex
+
+    @field_validator("schema_version", "source_request", "prepared_timeline", mode="before")
+    @classmethod
+    def snapshot_manifest_models(cls, value: Any) -> Any:
+        """Copy and revalidate trusted model instances at the manifest boundary."""
+        return _snapshot_model_input(value)
+
+    @field_validator(
+        "resolved_plugins",
+        "resolved_external_data",
+        "derived_random_streams",
+        mode="before",
+    )
+    @classmethod
+    def snapshot_manifest_records(cls, value: Any) -> Any:
+        """Copy and revalidate every resolved or derived nested record."""
+        return _snapshot_model_collection(value)
+
+    @field_validator("resolved_plugins")
+    @classmethod
+    def order_resolved_plugins(
+        cls,
+        value: tuple[ResolvedPluginRecord, ...],
+    ) -> tuple[ResolvedPluginRecord, ...]:
+        """Order resolved plugins by stable component identity."""
+        return tuple(sorted(value, key=lambda item: item.component_id))
+
+    @field_validator("resolved_external_data")
+    @classmethod
+    def order_resolved_external_data(
+        cls,
+        value: tuple[ExternalDataRef, ...],
+    ) -> tuple[ExternalDataRef, ...]:
+        """Order resolved scientific data by exact identity, version, and digest."""
+        return tuple(
+            sorted(
+                value,
+                key=lambda item: (item.data_id, item.version, item.sha256),
+            )
+        )
+
+    @field_validator("derived_random_streams")
+    @classmethod
+    def order_derived_random_streams(
+        cls,
+        value: tuple[DerivedRandomStream, ...],
+    ) -> tuple[DerivedRandomStream, ...]:
+        """Order derived streams by component and purpose."""
+        return tuple(
+            sorted(
+                value,
+                key=lambda item: (item.component_id, item.purpose),
+            )
+        )
+
+    @field_validator("expected_outputs", mode="before")
+    @classmethod
+    def normalize_expected_outputs(cls, value: Any) -> tuple[OutputRequirement, ...]:
+        """Reject empty or duplicate expected outputs before freezing."""
+        return SimulationRunRequest.normalize_output_requirements(value)
+
+    @field_serializer("expected_outputs", when_used="always")
+    def serialize_expected_outputs(
+        self,
+        value: frozenset[OutputRequirement],
+    ) -> list[str]:
+        """Serialize expected outputs in deterministic enum-value order."""
+        return [item.value for item in sorted(value, key=lambda item: item.value)]
+
+    @model_validator(mode="after")
+    def validate_manifest_integrity(self) -> Self:
+        """Recalculate scientific-input hashes and reject semantic tampering."""
+        ## -------------- step: validate resolved and derived identities ---------
+        plugin_ids = tuple(record.component_id for record in self.resolved_plugins)
+        if len(plugin_ids) != len(set(plugin_ids)):
+            raise ValueError("resolved_plugins must contain unique component_id values")
+
+        data_ids = tuple(record.data_id for record in self.resolved_external_data)
+        if len(data_ids) != len(set(data_ids)):
+            raise ValueError("resolved_external_data must contain unique data_id values")
+
+        stream_ids = tuple(
+            (record.component_id, record.purpose) for record in self.derived_random_streams
+        )
+        if len(stream_ids) != len(set(stream_ids)):
+            raise ValueError(
+                "derived_random_streams must contain unique component_id and purpose pairs"
+            )
+
+        ## -------------- step: validate prepared/source equivalence ---------
+        if self.expected_outputs != self.source_request.output_requirements:
+            raise ValueError("expected_outputs must equal source_request output_requirements")
+        if self.prepared_timeline.output_sampling != self.source_request.output_sampling:
+            raise ValueError("prepared output_sampling must equal source_request output_sampling")
+
+        source_schedule_ids = {
+            schedule.schedule_id for schedule in self.source_request.observation_schedules
+        }
+        prepared_schedule_ids = {
+            schedule.schedule_id for schedule in self.prepared_timeline.observation_schedules
+        }
+        if prepared_schedule_ids != source_schedule_ids:
+            raise ValueError(
+                "prepared observation schedule_id set must equal source_request schedule_id set"
+            )
+
+        ## -------------- step: recalculate all manifest hashes ---------
+        expected_source_hash = sha256_canonical_json(self.source_request)
+        if self.source_request_hash != expected_source_hash:
+            raise ValueError("source_request_hash does not match source_request")
+
+        expected_definition_hash = sha256_canonical_json(self.source_request.simulation_definition)
+        if self.simulation_definition_hash != expected_definition_hash:
+            raise ValueError("simulation_definition_hash does not match simulation_definition")
+
+        expected_content_hash = sha256_canonical_json(
+            self.model_dump(mode="json", exclude={"content_hash"})
+        )
+        if self.content_hash != expected_content_hash:
+            raise ValueError("content_hash does not match manifest payload")
+        return self
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        schema_version: SchemaVersion,
+        source_request: SimulationRunRequest,
+        resolved_plugins: tuple[ResolvedPluginRecord, ...],
+        resolved_external_data: tuple[ExternalDataRef, ...],
+        derived_random_streams: tuple[DerivedRandomStream, ...],
+        prepared_timeline: PreparedTimeline,
+    ) -> SimulationExecutionManifest:
+        """Create a validated manifest from alias-independent scientific snapshots."""
+        ## -------------- step: revalidate all supplied model instances ---------
+        validated_schema_version = SchemaVersion.model_validate(
+            _snapshot_model_input(schema_version)
+        )
+        validated_source = SimulationRunRequest.model_validate(
+            _snapshot_model_input(source_request)
+        )
+        validated_plugins = tuple(
+            ResolvedPluginRecord.model_validate(_snapshot_model_input(item))
+            for item in resolved_plugins
+        )
+        validated_data = tuple(
+            ExternalDataRef.model_validate(_snapshot_model_input(item))
+            for item in resolved_external_data
+        )
+        validated_streams = tuple(
+            DerivedRandomStream.model_validate(_snapshot_model_input(item))
+            for item in derived_random_streams
+        )
+        validated_timeline = PreparedTimeline.model_validate(
+            _snapshot_model_input(prepared_timeline)
+        )
+
+        ## -------------- step: order resolved scientific records ---------
+        ordered_plugins = tuple(sorted(validated_plugins, key=lambda item: item.component_id))
+        ordered_data = tuple(
+            sorted(
+                validated_data,
+                key=lambda item: (item.data_id, item.version, item.sha256),
+            )
+        )
+        ordered_streams = tuple(
+            sorted(
+                validated_streams,
+                key=lambda item: (item.component_id, item.purpose),
+            )
+        )
+
+        ## -------------- step: hash the source and content payload ---------
+        source_hash = sha256_canonical_json(validated_source)
+        definition_hash = sha256_canonical_json(validated_source.simulation_definition)
+        payload: dict[str, Any] = {
+            "schema_version": validated_schema_version,
+            "source_request": validated_source,
+            "source_request_hash": source_hash,
+            "simulation_definition_hash": definition_hash,
+            "resolved_plugins": ordered_plugins,
+            "resolved_external_data": ordered_data,
+            "derived_random_streams": ordered_streams,
+            "random_derivation_version": RANDOM_DERIVATION_VERSION,
+            "prepared_timeline": validated_timeline,
+            "event_ordering_policy": (EventOrderingPolicy.POST_MANEUVER_OBSERVATION_V1),
+            "expected_outputs": sorted(
+                validated_source.output_requirements,
+                key=lambda item: item.value,
+            ),
+            "canonicalization_version": CANONICALIZATION_VERSION,
+        }
+        payload["content_hash"] = sha256_canonical_json(payload)
+        return cls.model_validate(payload)
