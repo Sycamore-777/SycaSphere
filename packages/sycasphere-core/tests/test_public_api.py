@@ -6,8 +6,8 @@
 文件名    : test_public_api.py
 创建者    : Sycamore
 创建日期  : 2026-07-20
-最后修改  : 2026-07-20
-版本号    : v1.0.0
+最后修改  : 2026-07-26
+版本号    : v1.1.0
 
 ■ 用途说明:
   锁定 SycaSphere Core 的公开导入契约和 Pydantic 模式。
@@ -15,12 +15,15 @@
 ■ 主要函数功能:
   - test_public_contract_exports_are_exact: 验证受审查的公开名称集合。
   - test_public_model_schemas_match_snapshot: 验证公开模型 JSON Schema 快照。
+  - test_discriminated_public_schemas_expose_discriminators: 验证判别联合的稳定键。
 
 ■ 功能特性:
   ✓ 公开 API 变更必须经测试审查。
   ✓ 模式快照使用确定性 JSON 比较。
+  ✓ 运行输入与执行清单公开契约受到审查。
 
 ■ 更新日志:
+  v1.1.0 (2026-07-26): 覆盖仿真输入和执行清单公开契约。
   v1.0.0 (2026-07-20): 新增公开 API 和模式快照测试。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -40,29 +43,58 @@ from pydantic import BaseModel, TypeAdapter
 # =============================👐Seperate👐=============================
 EXPECTED_PUBLIC_CONTRACTS = {
     "CartesianState",
+    "CentralBody",
     "CoordinateRepresentation",
+    "DerivedRandomStream",
     "EarthFixedFrameSpec",
     "EntityDefinition",
     "EntityType",
+    "EnvironmentDefinition",
     "Epoch",
     "ErrorCategory",
     "ErrorDetail",
+    "EventOrderingPolicy",
+    "ExplicitObservationSchedule",
+    "ExternalDataRef",
+    "FiniteBurnManeuverSpec",
     "FrameKind",
     "FrameRef",
     "GeodeticLocation",
     "GroundStationDefinition",
+    "ImpulsiveManeuverSpec",
+    "ManeuverCapability",
+    "ManeuverCommand",
+    "ManeuverSpec",
+    "ManeuverType",
     "ModelRef",
+    "ObservationSchedule",
+    "ObservationScheduleKind",
     "OtherSpaceObjectDefinition",
+    "OutputProduct",
+    "OutputRequirement",
+    "OutputSampling",
+    "PeriodicObservationSchedule",
+    "PlannedTruthManeuver",
     "PluginKind",
     "PluginManifest",
     "PluginRef",
+    "PreparedManeuverEntry",
+    "PreparedManeuverSource",
+    "PreparedTimeline",
     "ReferenceEllipsoid",
+    "ResolvedPluginRecord",
     "ResourceRequirements",
     "RigidTransform",
+    "SamplingRule",
     "SchemaVersion",
+    "ScienceBackendBinding",
     "SensorAxes",
     "SensorDefinition",
     "SensorType",
+    "SimulationDefinition",
+    "SimulationExecutionManifest",
+    "SimulationRunRequest",
+    "SimulationTimeRange",
     "SpaceObjectPhysicalProperties",
     "SpacecraftDefinition",
     "TimeScale",
@@ -102,9 +134,31 @@ def _public_model_schemas() -> dict[str, dict[str, Any]]:
         core.SpacecraftDefinition,
         core.OtherSpaceObjectDefinition,
         core.GroundStationDefinition,
+        core.ExternalDataRef,
+        core.EnvironmentDefinition,
+        core.SimulationDefinition,
+        core.ManeuverCapability,
+        core.ImpulsiveManeuverSpec,
+        core.FiniteBurnManeuverSpec,
+        core.PlannedTruthManeuver,
+        core.ManeuverCommand,
+        core.SimulationTimeRange,
+        core.SamplingRule,
+        core.OutputSampling,
+        core.PeriodicObservationSchedule,
+        core.ExplicitObservationSchedule,
+        core.ScienceBackendBinding,
+        core.SimulationRunRequest,
+        core.ResolvedPluginRecord,
+        core.DerivedRandomStream,
+        core.PreparedManeuverEntry,
+        core.PreparedTimeline,
+        core.SimulationExecutionManifest,
     )
     schemas = {model.__name__: model.model_json_schema() for model in models}
     schemas["EntityDefinition"] = TypeAdapter(core.EntityDefinition).json_schema()
+    schemas["ManeuverSpec"] = TypeAdapter(core.ManeuverSpec).json_schema()
+    schemas["ObservationSchedule"] = TypeAdapter(core.ObservationSchedule).json_schema()
     return schemas
 
 
@@ -128,3 +182,29 @@ def test_public_model_schemas_match_snapshot() -> None:
 
     assert json.loads(expected_text) == _public_model_schemas()
     assert expected_text == _serialized_public_model_schemas()
+
+
+def test_discriminated_public_schemas_expose_discriminators() -> None:
+    """Published unions must retain their stable public discriminator properties."""
+    schemas = _public_model_schemas()
+
+    assert schemas["ManeuverSpec"]["discriminator"]["propertyName"] == "maneuver_type"
+    assert schemas["ObservationSchedule"]["discriminator"]["propertyName"] == "schedule_type"
+
+
+def test_execution_manifest_excludes_runtime_lifecycle_fields() -> None:
+    """The immutable manifest contains scientific inputs, not runtime state or results."""
+    fields = set(core.SimulationExecutionManifest.model_fields)
+
+    assert fields.isdisjoint(
+        {
+            "prepared_at",
+            "started_at",
+            "ended_at",
+            "status",
+            "error",
+            "output_hashes",
+            "output_path",
+            "runtime_command_journal",
+        }
+    )
