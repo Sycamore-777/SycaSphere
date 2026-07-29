@@ -1,4 +1,231 @@
 {
+  "AttitudeState": {
+    "$defs": {
+      "CoordinateRepresentation": {
+        "description": "Coordinate representations supported by public frame references.",
+        "enum": [
+          "CARTESIAN",
+          "GEODETIC"
+        ],
+        "title": "CoordinateRepresentation",
+        "type": "string"
+      },
+      "EarthFixedFrameSpec": {
+        "additionalProperties": false,
+        "description": "Explicit provenance required to interpret an Earth-fixed coordinate frame.",
+        "properties": {
+          "eop_data_id": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "iers_conventions": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "itrf_realization": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          }
+        },
+        "required": [
+          "itrf_realization",
+          "iers_conventions",
+          "eop_data_id"
+        ],
+        "title": "EarthFixedFrameSpec",
+        "type": "object"
+      },
+      "Epoch": {
+        "additionalProperties": false,
+        "description": "An immutable calendar instant whose time scale is always explicit.",
+        "properties": {
+          "time_scale": {
+            "$ref": "#/$defs/TimeScale"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "time_scale"
+        ],
+        "title": "Epoch",
+        "type": "object"
+      },
+      "FrameKind": {
+        "description": "Stable public frame semantics that a backend adapter may implement.",
+        "enum": [
+          "J2000",
+          "EARTH_FIXED",
+          "LVLH",
+          "VVLH",
+          "BODY",
+          "SENSOR"
+        ],
+        "title": "FrameKind",
+        "type": "string"
+      },
+      "FrameRef": {
+        "additionalProperties": false,
+        "description": "An immutable public frame reference without scientific-backend implementation types.",
+        "properties": {
+          "convention": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "earth_fixed": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EarthFixedFrameSpec"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "ellipsoid": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ReferenceEllipsoid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "kind": {
+            "$ref": "#/$defs/FrameKind"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reference_epoch": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Epoch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "representation": {
+            "$ref": "#/$defs/CoordinateRepresentation",
+            "default": "CARTESIAN"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FrameRef",
+        "type": "object"
+      },
+      "ReferenceEllipsoid": {
+        "description": "Reference ellipsoids used only with compatible coordinate representations.",
+        "enum": [
+          "WGS84"
+        ],
+        "title": "ReferenceEllipsoid",
+        "type": "string"
+      },
+      "RequiredFrameMetadata": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "StrictFiniteFloat": {
+        "type": "number"
+      },
+      "TimeScale": {
+        "description": "Supported labels for an Epoch's declared time scale.",
+        "enum": [
+          "UTC",
+          "TAI",
+          "TT"
+        ],
+        "title": "TimeScale",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "description": "An immutable reference-to-body attitude quaternion at an explicit epoch.",
+    "properties": {
+      "angular_velocity_body_wrt_reference_rad_s": {
+        "anyOf": [
+          {
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "$ref": "#/$defs/StrictFiniteFloat"
+              },
+              {
+                "$ref": "#/$defs/StrictFiniteFloat"
+              },
+              {
+                "$ref": "#/$defs/StrictFiniteFloat"
+              }
+            ],
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Angular Velocity Body Wrt Reference Rad S"
+      },
+      "epoch": {
+        "$ref": "#/$defs/Epoch"
+      },
+      "reference_frame": {
+        "$ref": "#/$defs/FrameRef"
+      },
+      "rotation_reference_to_body_wxyz": {
+        "maxItems": 4,
+        "minItems": 4,
+        "prefixItems": [
+          {
+            "$ref": "#/$defs/StrictFiniteFloat"
+          },
+          {
+            "$ref": "#/$defs/StrictFiniteFloat"
+          },
+          {
+            "$ref": "#/$defs/StrictFiniteFloat"
+          },
+          {
+            "$ref": "#/$defs/StrictFiniteFloat"
+          }
+        ],
+        "title": "Rotation Reference To Body Wxyz",
+        "type": "array"
+      }
+    },
+    "required": [
+      "epoch",
+      "reference_frame",
+      "rotation_reference_to_body_wxyz"
+    ],
+    "title": "AttitudeState",
+    "type": "object"
+  },
   "CartesianState": {
     "$defs": {
       "CoordinateRepresentation": {
@@ -214,6 +441,100 @@
       "velocity_mps"
     ],
     "title": "CartesianState",
+    "type": "object"
+  },
+  "CustomMeasurementSchemaRef": {
+    "$defs": {
+      "NamespacedId": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\\.[A-Za-z0-9_.-]+)+/[A-Za-z0-9_.-]+$",
+        "type": "string"
+      },
+      "SchemaVersion": {
+        "additionalProperties": false,
+        "description": "An immutable public schema version with forward-compatible minors.",
+        "properties": {
+          "major": {
+            "minimum": 0,
+            "title": "Major",
+            "type": "integer"
+          },
+          "minor": {
+            "minimum": 0,
+            "title": "Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "major",
+          "minor"
+        ],
+        "title": "SchemaVersion",
+        "type": "object"
+      },
+      "Sha256Hex": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "description": "A location-independent exact schema identity for one custom measurement type.",
+    "properties": {
+      "schema_id": {
+        "$ref": "#/$defs/NamespacedId"
+      },
+      "schema_version": {
+        "$ref": "#/$defs/SchemaVersion"
+      },
+      "sha256": {
+        "$ref": "#/$defs/Sha256Hex"
+      }
+    },
+    "required": [
+      "schema_id",
+      "schema_version",
+      "sha256"
+    ],
+    "title": "CustomMeasurementSchemaRef",
+    "type": "object"
+  },
+  "DeliverySummary": {
+    "$defs": {
+      "StrictNonNegativeInt": {
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "additionalProperties": false,
+    "description": "Conserved counts of all terminal observation delivery outcomes.",
+    "properties": {
+      "delivered": {
+        "$ref": "#/$defs/StrictNonNegativeInt"
+      },
+      "geometry_rejected": {
+        "$ref": "#/$defs/StrictNonNegativeInt"
+      },
+      "link_dropped": {
+        "$ref": "#/$defs/StrictNonNegativeInt"
+      },
+      "quality_rejected": {
+        "$ref": "#/$defs/StrictNonNegativeInt"
+      },
+      "sensor_missed": {
+        "$ref": "#/$defs/StrictNonNegativeInt"
+      },
+      "total_events": {
+        "$ref": "#/$defs/StrictNonNegativeInt"
+      }
+    },
+    "required": [
+      "total_events",
+      "delivered",
+      "geometry_rejected",
+      "sensor_missed",
+      "quality_rejected",
+      "link_dropped"
+    ],
+    "title": "DeliverySummary",
     "type": "object"
   },
   "DerivedRandomStream": {
@@ -2666,6 +2987,468 @@
     "title": "GroundStationDefinition",
     "type": "object"
   },
+  "IdealObservation": {
+    "$defs": {
+      "CoordinateRepresentation": {
+        "description": "Coordinate representations supported by public frame references.",
+        "enum": [
+          "CARTESIAN",
+          "GEODETIC"
+        ],
+        "title": "CoordinateRepresentation",
+        "type": "string"
+      },
+      "CustomMeasurementSchemaRef": {
+        "additionalProperties": false,
+        "description": "A location-independent exact schema identity for one custom measurement type.",
+        "properties": {
+          "schema_id": {
+            "$ref": "#/$defs/NamespacedId"
+          },
+          "schema_version": {
+            "$ref": "#/$defs/SchemaVersion"
+          },
+          "sha256": {
+            "$ref": "#/$defs/Sha256Hex"
+          }
+        },
+        "required": [
+          "schema_id",
+          "schema_version",
+          "sha256"
+        ],
+        "title": "CustomMeasurementSchemaRef",
+        "type": "object"
+      },
+      "DefinitionString": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "EarthFixedFrameSpec": {
+        "additionalProperties": false,
+        "description": "Explicit provenance required to interpret an Earth-fixed coordinate frame.",
+        "properties": {
+          "eop_data_id": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "iers_conventions": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "itrf_realization": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          }
+        },
+        "required": [
+          "itrf_realization",
+          "iers_conventions",
+          "eop_data_id"
+        ],
+        "title": "EarthFixedFrameSpec",
+        "type": "object"
+      },
+      "Epoch": {
+        "additionalProperties": false,
+        "description": "An immutable calendar instant whose time scale is always explicit.",
+        "properties": {
+          "time_scale": {
+            "$ref": "#/$defs/TimeScale"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "time_scale"
+        ],
+        "title": "Epoch",
+        "type": "object"
+      },
+      "FrameKind": {
+        "description": "Stable public frame semantics that a backend adapter may implement.",
+        "enum": [
+          "J2000",
+          "EARTH_FIXED",
+          "LVLH",
+          "VVLH",
+          "BODY",
+          "SENSOR"
+        ],
+        "title": "FrameKind",
+        "type": "string"
+      },
+      "FrameRef": {
+        "additionalProperties": false,
+        "description": "An immutable public frame reference without scientific-backend implementation types.",
+        "properties": {
+          "convention": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "earth_fixed": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EarthFixedFrameSpec"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "ellipsoid": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ReferenceEllipsoid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "kind": {
+            "$ref": "#/$defs/FrameKind"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reference_epoch": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Epoch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "representation": {
+            "$ref": "#/$defs/CoordinateRepresentation",
+            "default": "CARTESIAN"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FrameRef",
+        "type": "object"
+      },
+      "JsonValue": {},
+      "KnownObjectSubjectRef": {
+        "additionalProperties": false,
+        "description": "Reference an explicitly authorized public object identity.",
+        "properties": {
+          "kind": {
+            "const": "KNOWN_OBJECT",
+            "default": "KNOWN_OBJECT",
+            "title": "Kind",
+            "type": "string"
+          },
+          "object_id": {
+            "$ref": "#/$defs/DefinitionString"
+          }
+        },
+        "required": [
+          "object_id"
+        ],
+        "title": "KnownObjectSubjectRef",
+        "type": "object"
+      },
+      "MeasurementType": {
+        "description": "Stable measurement payload types supported by the Core boundary.",
+        "enum": [
+          "ANGLES_RA_DEC",
+          "ANGLES_AZ_EL",
+          "RANGE",
+          "RANGE_RATE",
+          "LOS_UNIT_VECTOR",
+          "CUSTOM"
+        ],
+        "title": "MeasurementType",
+        "type": "string"
+      },
+      "MeasurementValues": {
+        "items": {
+          "$ref": "#/$defs/StrictFiniteFloat"
+        },
+        "type": "array"
+      },
+      "ModelRef": {
+        "additionalProperties": false,
+        "description": "A data-only reference to a configured scientific submodel.",
+        "properties": {
+          "configuration": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Configuration",
+            "type": "object"
+          },
+          "interface_version": {
+            "$ref": "#/$defs/SchemaVersion"
+          },
+          "model_id": {
+            "$ref": "#/$defs/StableModelId"
+          }
+        },
+        "required": [
+          "model_id",
+          "interface_version"
+        ],
+        "title": "ModelRef",
+        "type": "object"
+      },
+      "NamespacedId": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\\.[A-Za-z0-9_.-]+)+/[A-Za-z0-9_.-]+$",
+        "type": "string"
+      },
+      "ObservationMeasurement": {
+        "additionalProperties": false,
+        "description": "An immutable, strict, self-describing standard or custom measurement.",
+        "properties": {
+          "component_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Names",
+            "type": "array"
+          },
+          "component_units": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Units",
+            "type": "array"
+          },
+          "custom_schema_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CustomMeasurementSchemaRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "custom_type": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/NamespacedId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "frame": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FrameRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "measurement_type": {
+            "$ref": "#/$defs/MeasurementType"
+          },
+          "qualifiers": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Qualifiers",
+            "type": "object"
+          },
+          "values": {
+            "$ref": "#/$defs/MeasurementValues"
+          }
+        },
+        "required": [
+          "measurement_type",
+          "values",
+          "component_names",
+          "component_units",
+          "frame",
+          "qualifiers"
+        ],
+        "title": "ObservationMeasurement",
+        "type": "object"
+      },
+      "ObservationSubjectRef": {
+        "discriminator": {
+          "mapping": {
+            "KNOWN_OBJECT": "#/$defs/KnownObjectSubjectRef",
+            "TRACKLET": "#/$defs/TrackletSubjectRef",
+            "UNASSOCIATED": "#/$defs/UnassociatedSubjectRef"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/KnownObjectSubjectRef"
+          },
+          {
+            "$ref": "#/$defs/TrackletSubjectRef"
+          },
+          {
+            "$ref": "#/$defs/UnassociatedSubjectRef"
+          }
+        ]
+      },
+      "ReferenceEllipsoid": {
+        "description": "Reference ellipsoids used only with compatible coordinate representations.",
+        "enum": [
+          "WGS84"
+        ],
+        "title": "ReferenceEllipsoid",
+        "type": "string"
+      },
+      "RequiredFrameMetadata": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "SchemaVersion": {
+        "additionalProperties": false,
+        "description": "An immutable public schema version with forward-compatible minors.",
+        "properties": {
+          "major": {
+            "minimum": 0,
+            "title": "Major",
+            "type": "integer"
+          },
+          "minor": {
+            "minimum": 0,
+            "title": "Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "major",
+          "minor"
+        ],
+        "title": "SchemaVersion",
+        "type": "object"
+      },
+      "Sha256Hex": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "StableModelId": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "StrictFiniteFloat": {
+        "type": "number"
+      },
+      "TimeScale": {
+        "description": "Supported labels for an Epoch's declared time scale.",
+        "enum": [
+          "UTC",
+          "TAI",
+          "TT"
+        ],
+        "title": "TimeScale",
+        "type": "string"
+      },
+      "TrackletSubjectRef": {
+        "additionalProperties": false,
+        "description": "Reference a public tracklet without asserting its truth identity.",
+        "properties": {
+          "kind": {
+            "const": "TRACKLET",
+            "default": "TRACKLET",
+            "title": "Kind",
+            "type": "string"
+          },
+          "tracklet_id": {
+            "$ref": "#/$defs/DefinitionString"
+          }
+        },
+        "required": [
+          "tracklet_id"
+        ],
+        "title": "TrackletSubjectRef",
+        "type": "object"
+      },
+      "UnassociatedSubjectRef": {
+        "additionalProperties": false,
+        "description": "Represent a detection without inventing a public target identity.",
+        "properties": {
+          "kind": {
+            "const": "UNASSOCIATED",
+            "default": "UNASSOCIATED",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "UnassociatedSubjectRef",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "description": "An immutable error-free observation visible to authorized algorithms.",
+    "properties": {
+      "channel": {
+        "const": "IDEAL",
+        "default": "IDEAL",
+        "title": "Channel",
+        "type": "string"
+      },
+      "event_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "measurement": {
+        "$ref": "#/$defs/ObservationMeasurement"
+      },
+      "measurement_epoch": {
+        "$ref": "#/$defs/Epoch"
+      },
+      "measurement_model_ref": {
+        "$ref": "#/$defs/ModelRef"
+      },
+      "observation_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "sensor_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "subject_ref": {
+        "$ref": "#/$defs/ObservationSubjectRef"
+      }
+    },
+    "required": [
+      "observation_id",
+      "event_id",
+      "measurement_epoch",
+      "sensor_id",
+      "subject_ref",
+      "measurement_model_ref",
+      "measurement"
+    ],
+    "title": "IdealObservation",
+    "type": "object"
+  },
   "ImpulsiveManeuverSpec": {
     "$defs": {
       "CoordinateRepresentation": {
@@ -2865,6 +3648,32 @@
       "frame"
     ],
     "title": "ImpulsiveManeuverSpec",
+    "type": "object"
+  },
+  "KnownObjectSubjectRef": {
+    "$defs": {
+      "DefinitionString": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "description": "Reference an explicitly authorized public object identity.",
+    "properties": {
+      "kind": {
+        "const": "KNOWN_OBJECT",
+        "default": "KNOWN_OBJECT",
+        "title": "Kind",
+        "type": "string"
+      },
+      "object_id": {
+        "$ref": "#/$defs/DefinitionString"
+      }
+    },
+    "required": [
+      "object_id"
+    ],
+    "title": "KnownObjectSubjectRef",
     "type": "object"
   },
   "ManeuverCapability": {
@@ -3511,6 +4320,56 @@
       }
     ]
   },
+  "MeasurementUncertainty": {
+    "$defs": {
+      "CovarianceMatrix": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/StrictFiniteFloat"
+          },
+          "type": "array"
+        },
+        "type": "array"
+      },
+      "StrictFiniteFloat": {
+        "type": "number"
+      }
+    },
+    "additionalProperties": false,
+    "description": "An immutable declared covariance for reported-minus-ideal residual error.",
+    "properties": {
+      "component_names": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Component Names",
+        "type": "array"
+      },
+      "component_units": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Component Units",
+        "type": "array"
+      },
+      "covariance": {
+        "$ref": "#/$defs/CovarianceMatrix"
+      },
+      "semantics": {
+        "const": "EFFECTIVE_RESIDUAL_ERROR_COVARIANCE_V1",
+        "title": "Semantics",
+        "type": "string"
+      }
+    },
+    "required": [
+      "semantics",
+      "component_names",
+      "component_units",
+      "covariance"
+    ],
+    "title": "MeasurementUncertainty",
+    "type": "object"
+  },
   "ModelRef": {
     "$defs": {
       "JsonValue": {},
@@ -3563,6 +4422,705 @@
       "interface_version"
     ],
     "title": "ModelRef",
+    "type": "object"
+  },
+  "ObservationDeliveryRecord": {
+    "$defs": {
+      "DefinitionString": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "DeliveryOutcome": {
+        "description": "Terminal scientific delivery outcomes for one observation event.",
+        "enum": [
+          "GEOMETRY_REJECTED",
+          "SENSOR_MISSED",
+          "QUALITY_REJECTED",
+          "LINK_DROPPED",
+          "DELIVERED"
+        ],
+        "title": "DeliveryOutcome",
+        "type": "string"
+      },
+      "Epoch": {
+        "additionalProperties": false,
+        "description": "An immutable calendar instant whose time scale is always explicit.",
+        "properties": {
+          "time_scale": {
+            "$ref": "#/$defs/TimeScale"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "time_scale"
+        ],
+        "title": "Epoch",
+        "type": "object"
+      },
+      "ObservationChannel": {
+        "description": "Algorithm-visible observation channels.",
+        "enum": [
+          "IDEAL",
+          "REPORTED"
+        ],
+        "title": "ObservationChannel",
+        "type": "string"
+      },
+      "Sha256Hex": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "StrictFiniteFloat": {
+        "type": "number"
+      },
+      "TimeScale": {
+        "description": "Supported labels for an Epoch's declared time scale.",
+        "enum": [
+          "UTC",
+          "TAI",
+          "TT"
+        ],
+        "title": "TimeScale",
+        "type": "string"
+      },
+      "_NamespacedReasonCode": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\\.[A-Za-z0-9_.-]+)+/[A-Za-z0-9_.-]+$",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "description": "One immutable terminal outcome record for an observation event.",
+    "properties": {
+      "delivery_epoch": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Epoch"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "event_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "ideal_observation_id": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/DefinitionString"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "latency_s": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/StrictFiniteFloat"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "measurement_epoch": {
+        "$ref": "#/$defs/Epoch"
+      },
+      "observation_payload_sha256": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Sha256Hex"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "outcome": {
+        "$ref": "#/$defs/DeliveryOutcome"
+      },
+      "reason_code": {
+        "$ref": "#/$defs/_NamespacedReasonCode"
+      },
+      "reported_observation_id": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/DefinitionString"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "selected_channel": {
+        "$ref": "#/$defs/ObservationChannel"
+      }
+    },
+    "required": [
+      "event_id",
+      "selected_channel",
+      "outcome",
+      "measurement_epoch",
+      "delivery_epoch",
+      "latency_s",
+      "ideal_observation_id",
+      "reported_observation_id",
+      "observation_payload_sha256",
+      "reason_code"
+    ],
+    "title": "ObservationDeliveryRecord",
+    "type": "object"
+  },
+  "ObservationEvent": {
+    "$defs": {
+      "DefinitionString": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "Epoch": {
+        "additionalProperties": false,
+        "description": "An immutable calendar instant whose time scale is always explicit.",
+        "properties": {
+          "time_scale": {
+            "$ref": "#/$defs/TimeScale"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "time_scale"
+        ],
+        "title": "Epoch",
+        "type": "object"
+      },
+      "GeometryStatus": {
+        "description": "Final geometry outcomes for an allocated observation event.",
+        "enum": [
+          "VISIBLE",
+          "OCCLUDED",
+          "OUT_OF_FIELD_OF_VIEW",
+          "INSUFFICIENT_ILLUMINATION",
+          "POINTING_UNAVAILABLE"
+        ],
+        "title": "GeometryStatus",
+        "type": "string"
+      },
+      "JsonValue": {},
+      "KnownObjectSubjectRef": {
+        "additionalProperties": false,
+        "description": "Reference an explicitly authorized public object identity.",
+        "properties": {
+          "kind": {
+            "const": "KNOWN_OBJECT",
+            "default": "KNOWN_OBJECT",
+            "title": "Kind",
+            "type": "string"
+          },
+          "object_id": {
+            "$ref": "#/$defs/DefinitionString"
+          }
+        },
+        "required": [
+          "object_id"
+        ],
+        "title": "KnownObjectSubjectRef",
+        "type": "object"
+      },
+      "MeasurementType": {
+        "description": "Stable measurement payload types supported by the Core boundary.",
+        "enum": [
+          "ANGLES_RA_DEC",
+          "ANGLES_AZ_EL",
+          "RANGE",
+          "RANGE_RATE",
+          "LOS_UNIT_VECTOR",
+          "CUSTOM"
+        ],
+        "title": "MeasurementType",
+        "type": "string"
+      },
+      "ModelRef": {
+        "additionalProperties": false,
+        "description": "A data-only reference to a configured scientific submodel.",
+        "properties": {
+          "configuration": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Configuration",
+            "type": "object"
+          },
+          "interface_version": {
+            "$ref": "#/$defs/SchemaVersion"
+          },
+          "model_id": {
+            "$ref": "#/$defs/StableModelId"
+          }
+        },
+        "required": [
+          "model_id",
+          "interface_version"
+        ],
+        "title": "ModelRef",
+        "type": "object"
+      },
+      "ObservationSubjectRef": {
+        "discriminator": {
+          "mapping": {
+            "KNOWN_OBJECT": "#/$defs/KnownObjectSubjectRef",
+            "TRACKLET": "#/$defs/TrackletSubjectRef",
+            "UNASSOCIATED": "#/$defs/UnassociatedSubjectRef"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/KnownObjectSubjectRef"
+          },
+          {
+            "$ref": "#/$defs/TrackletSubjectRef"
+          },
+          {
+            "$ref": "#/$defs/UnassociatedSubjectRef"
+          }
+        ]
+      },
+      "SchemaVersion": {
+        "additionalProperties": false,
+        "description": "An immutable public schema version with forward-compatible minors.",
+        "properties": {
+          "major": {
+            "minimum": 0,
+            "title": "Major",
+            "type": "integer"
+          },
+          "minor": {
+            "minimum": 0,
+            "title": "Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "major",
+          "minor"
+        ],
+        "title": "SchemaVersion",
+        "type": "object"
+      },
+      "StableModelId": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "TimeScale": {
+        "description": "Supported labels for an Epoch's declared time scale.",
+        "enum": [
+          "UTC",
+          "TAI",
+          "TT"
+        ],
+        "title": "TimeScale",
+        "type": "string"
+      },
+      "TrackletSubjectRef": {
+        "additionalProperties": false,
+        "description": "Reference a public tracklet without asserting its truth identity.",
+        "properties": {
+          "kind": {
+            "const": "TRACKLET",
+            "default": "TRACKLET",
+            "title": "Kind",
+            "type": "string"
+          },
+          "tracklet_id": {
+            "$ref": "#/$defs/DefinitionString"
+          }
+        },
+        "required": [
+          "tracklet_id"
+        ],
+        "title": "TrackletSubjectRef",
+        "type": "object"
+      },
+      "UnassociatedSubjectRef": {
+        "additionalProperties": false,
+        "description": "Represent a detection without inventing a public target identity.",
+        "properties": {
+          "kind": {
+            "const": "UNASSOCIATED",
+            "default": "UNASSOCIATED",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "UnassociatedSubjectRef",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "description": "One immutable final geometry fact for a single schedule occurrence.",
+    "properties": {
+      "event_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "geometry_status": {
+        "$ref": "#/$defs/GeometryStatus"
+      },
+      "measurement_epoch": {
+        "$ref": "#/$defs/Epoch"
+      },
+      "measurement_model_ref": {
+        "$ref": "#/$defs/ModelRef"
+      },
+      "measurement_type": {
+        "$ref": "#/$defs/MeasurementType"
+      },
+      "platform_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "public_subject_ref": {
+        "$ref": "#/$defs/ObservationSubjectRef"
+      },
+      "schedule_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "sensor_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "truth_target_entity_id": {
+        "$ref": "#/$defs/DefinitionString"
+      }
+    },
+    "required": [
+      "event_id",
+      "schedule_id",
+      "measurement_epoch",
+      "sensor_id",
+      "platform_id",
+      "truth_target_entity_id",
+      "public_subject_ref",
+      "measurement_model_ref",
+      "measurement_type",
+      "geometry_status"
+    ],
+    "title": "ObservationEvent",
+    "type": "object"
+  },
+  "ObservationMeasurement": {
+    "$defs": {
+      "CoordinateRepresentation": {
+        "description": "Coordinate representations supported by public frame references.",
+        "enum": [
+          "CARTESIAN",
+          "GEODETIC"
+        ],
+        "title": "CoordinateRepresentation",
+        "type": "string"
+      },
+      "CustomMeasurementSchemaRef": {
+        "additionalProperties": false,
+        "description": "A location-independent exact schema identity for one custom measurement type.",
+        "properties": {
+          "schema_id": {
+            "$ref": "#/$defs/NamespacedId"
+          },
+          "schema_version": {
+            "$ref": "#/$defs/SchemaVersion"
+          },
+          "sha256": {
+            "$ref": "#/$defs/Sha256Hex"
+          }
+        },
+        "required": [
+          "schema_id",
+          "schema_version",
+          "sha256"
+        ],
+        "title": "CustomMeasurementSchemaRef",
+        "type": "object"
+      },
+      "EarthFixedFrameSpec": {
+        "additionalProperties": false,
+        "description": "Explicit provenance required to interpret an Earth-fixed coordinate frame.",
+        "properties": {
+          "eop_data_id": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "iers_conventions": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "itrf_realization": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          }
+        },
+        "required": [
+          "itrf_realization",
+          "iers_conventions",
+          "eop_data_id"
+        ],
+        "title": "EarthFixedFrameSpec",
+        "type": "object"
+      },
+      "Epoch": {
+        "additionalProperties": false,
+        "description": "An immutable calendar instant whose time scale is always explicit.",
+        "properties": {
+          "time_scale": {
+            "$ref": "#/$defs/TimeScale"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "time_scale"
+        ],
+        "title": "Epoch",
+        "type": "object"
+      },
+      "FrameKind": {
+        "description": "Stable public frame semantics that a backend adapter may implement.",
+        "enum": [
+          "J2000",
+          "EARTH_FIXED",
+          "LVLH",
+          "VVLH",
+          "BODY",
+          "SENSOR"
+        ],
+        "title": "FrameKind",
+        "type": "string"
+      },
+      "FrameRef": {
+        "additionalProperties": false,
+        "description": "An immutable public frame reference without scientific-backend implementation types.",
+        "properties": {
+          "convention": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "earth_fixed": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EarthFixedFrameSpec"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "ellipsoid": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ReferenceEllipsoid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "kind": {
+            "$ref": "#/$defs/FrameKind"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reference_epoch": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Epoch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "representation": {
+            "$ref": "#/$defs/CoordinateRepresentation",
+            "default": "CARTESIAN"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FrameRef",
+        "type": "object"
+      },
+      "JsonValue": {},
+      "MeasurementType": {
+        "description": "Stable measurement payload types supported by the Core boundary.",
+        "enum": [
+          "ANGLES_RA_DEC",
+          "ANGLES_AZ_EL",
+          "RANGE",
+          "RANGE_RATE",
+          "LOS_UNIT_VECTOR",
+          "CUSTOM"
+        ],
+        "title": "MeasurementType",
+        "type": "string"
+      },
+      "MeasurementValues": {
+        "items": {
+          "$ref": "#/$defs/StrictFiniteFloat"
+        },
+        "type": "array"
+      },
+      "NamespacedId": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\\.[A-Za-z0-9_.-]+)+/[A-Za-z0-9_.-]+$",
+        "type": "string"
+      },
+      "ReferenceEllipsoid": {
+        "description": "Reference ellipsoids used only with compatible coordinate representations.",
+        "enum": [
+          "WGS84"
+        ],
+        "title": "ReferenceEllipsoid",
+        "type": "string"
+      },
+      "RequiredFrameMetadata": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "SchemaVersion": {
+        "additionalProperties": false,
+        "description": "An immutable public schema version with forward-compatible minors.",
+        "properties": {
+          "major": {
+            "minimum": 0,
+            "title": "Major",
+            "type": "integer"
+          },
+          "minor": {
+            "minimum": 0,
+            "title": "Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "major",
+          "minor"
+        ],
+        "title": "SchemaVersion",
+        "type": "object"
+      },
+      "Sha256Hex": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "StrictFiniteFloat": {
+        "type": "number"
+      },
+      "TimeScale": {
+        "description": "Supported labels for an Epoch's declared time scale.",
+        "enum": [
+          "UTC",
+          "TAI",
+          "TT"
+        ],
+        "title": "TimeScale",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "description": "An immutable, strict, self-describing standard or custom measurement.",
+    "properties": {
+      "component_names": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Component Names",
+        "type": "array"
+      },
+      "component_units": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Component Units",
+        "type": "array"
+      },
+      "custom_schema_ref": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/CustomMeasurementSchemaRef"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "custom_type": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NamespacedId"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "frame": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/FrameRef"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "measurement_type": {
+        "$ref": "#/$defs/MeasurementType"
+      },
+      "qualifiers": {
+        "additionalProperties": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "title": "Qualifiers",
+        "type": "object"
+      },
+      "values": {
+        "$ref": "#/$defs/MeasurementValues"
+      }
+    },
+    "required": [
+      "measurement_type",
+      "values",
+      "component_names",
+      "component_units",
+      "frame",
+      "qualifiers"
+    ],
+    "title": "ObservationMeasurement",
     "type": "object"
   },
   "ObservationSchedule": {
@@ -3747,6 +5305,87 @@
       },
       {
         "$ref": "#/$defs/ExplicitObservationSchedule"
+      }
+    ]
+  },
+  "ObservationSubjectRef": {
+    "$defs": {
+      "DefinitionString": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "KnownObjectSubjectRef": {
+        "additionalProperties": false,
+        "description": "Reference an explicitly authorized public object identity.",
+        "properties": {
+          "kind": {
+            "const": "KNOWN_OBJECT",
+            "default": "KNOWN_OBJECT",
+            "title": "Kind",
+            "type": "string"
+          },
+          "object_id": {
+            "$ref": "#/$defs/DefinitionString"
+          }
+        },
+        "required": [
+          "object_id"
+        ],
+        "title": "KnownObjectSubjectRef",
+        "type": "object"
+      },
+      "TrackletSubjectRef": {
+        "additionalProperties": false,
+        "description": "Reference a public tracklet without asserting its truth identity.",
+        "properties": {
+          "kind": {
+            "const": "TRACKLET",
+            "default": "TRACKLET",
+            "title": "Kind",
+            "type": "string"
+          },
+          "tracklet_id": {
+            "$ref": "#/$defs/DefinitionString"
+          }
+        },
+        "required": [
+          "tracklet_id"
+        ],
+        "title": "TrackletSubjectRef",
+        "type": "object"
+      },
+      "UnassociatedSubjectRef": {
+        "additionalProperties": false,
+        "description": "Represent a detection without inventing a public target identity.",
+        "properties": {
+          "kind": {
+            "const": "UNASSOCIATED",
+            "default": "UNASSOCIATED",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "UnassociatedSubjectRef",
+        "type": "object"
+      }
+    },
+    "discriminator": {
+      "mapping": {
+        "KNOWN_OBJECT": "#/$defs/KnownObjectSubjectRef",
+        "TRACKLET": "#/$defs/TrackletSubjectRef",
+        "UNASSOCIATED": "#/$defs/UnassociatedSubjectRef"
+      },
+      "propertyName": "kind"
+    },
+    "oneOf": [
+      {
+        "$ref": "#/$defs/KnownObjectSubjectRef"
+      },
+      {
+        "$ref": "#/$defs/TrackletSubjectRef"
+      },
+      {
+        "$ref": "#/$defs/UnassociatedSubjectRef"
       }
     ]
   },
@@ -5630,6 +7269,528 @@
       "output_sampling"
     ],
     "title": "PreparedTimeline",
+    "type": "object"
+  },
+  "ReportedObservation": {
+    "$defs": {
+      "CoordinateRepresentation": {
+        "description": "Coordinate representations supported by public frame references.",
+        "enum": [
+          "CARTESIAN",
+          "GEODETIC"
+        ],
+        "title": "CoordinateRepresentation",
+        "type": "string"
+      },
+      "CovarianceMatrix": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/StrictFiniteFloat"
+          },
+          "type": "array"
+        },
+        "type": "array"
+      },
+      "CustomMeasurementSchemaRef": {
+        "additionalProperties": false,
+        "description": "A location-independent exact schema identity for one custom measurement type.",
+        "properties": {
+          "schema_id": {
+            "$ref": "#/$defs/NamespacedId"
+          },
+          "schema_version": {
+            "$ref": "#/$defs/SchemaVersion"
+          },
+          "sha256": {
+            "$ref": "#/$defs/Sha256Hex"
+          }
+        },
+        "required": [
+          "schema_id",
+          "schema_version",
+          "sha256"
+        ],
+        "title": "CustomMeasurementSchemaRef",
+        "type": "object"
+      },
+      "DefinitionString": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "EarthFixedFrameSpec": {
+        "additionalProperties": false,
+        "description": "Explicit provenance required to interpret an Earth-fixed coordinate frame.",
+        "properties": {
+          "eop_data_id": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "iers_conventions": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "itrf_realization": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          }
+        },
+        "required": [
+          "itrf_realization",
+          "iers_conventions",
+          "eop_data_id"
+        ],
+        "title": "EarthFixedFrameSpec",
+        "type": "object"
+      },
+      "Epoch": {
+        "additionalProperties": false,
+        "description": "An immutable calendar instant whose time scale is always explicit.",
+        "properties": {
+          "time_scale": {
+            "$ref": "#/$defs/TimeScale"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "time_scale"
+        ],
+        "title": "Epoch",
+        "type": "object"
+      },
+      "FrameKind": {
+        "description": "Stable public frame semantics that a backend adapter may implement.",
+        "enum": [
+          "J2000",
+          "EARTH_FIXED",
+          "LVLH",
+          "VVLH",
+          "BODY",
+          "SENSOR"
+        ],
+        "title": "FrameKind",
+        "type": "string"
+      },
+      "FrameRef": {
+        "additionalProperties": false,
+        "description": "An immutable public frame reference without scientific-backend implementation types.",
+        "properties": {
+          "convention": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "earth_fixed": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EarthFixedFrameSpec"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "ellipsoid": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ReferenceEllipsoid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "kind": {
+            "$ref": "#/$defs/FrameKind"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reference_epoch": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Epoch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "representation": {
+            "$ref": "#/$defs/CoordinateRepresentation",
+            "default": "CARTESIAN"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FrameRef",
+        "type": "object"
+      },
+      "JsonValue": {},
+      "KnownObjectSubjectRef": {
+        "additionalProperties": false,
+        "description": "Reference an explicitly authorized public object identity.",
+        "properties": {
+          "kind": {
+            "const": "KNOWN_OBJECT",
+            "default": "KNOWN_OBJECT",
+            "title": "Kind",
+            "type": "string"
+          },
+          "object_id": {
+            "$ref": "#/$defs/DefinitionString"
+          }
+        },
+        "required": [
+          "object_id"
+        ],
+        "title": "KnownObjectSubjectRef",
+        "type": "object"
+      },
+      "MeasurementType": {
+        "description": "Stable measurement payload types supported by the Core boundary.",
+        "enum": [
+          "ANGLES_RA_DEC",
+          "ANGLES_AZ_EL",
+          "RANGE",
+          "RANGE_RATE",
+          "LOS_UNIT_VECTOR",
+          "CUSTOM"
+        ],
+        "title": "MeasurementType",
+        "type": "string"
+      },
+      "MeasurementUncertainty": {
+        "additionalProperties": false,
+        "description": "An immutable declared covariance for reported-minus-ideal residual error.",
+        "properties": {
+          "component_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Names",
+            "type": "array"
+          },
+          "component_units": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Units",
+            "type": "array"
+          },
+          "covariance": {
+            "$ref": "#/$defs/CovarianceMatrix"
+          },
+          "semantics": {
+            "const": "EFFECTIVE_RESIDUAL_ERROR_COVARIANCE_V1",
+            "title": "Semantics",
+            "type": "string"
+          }
+        },
+        "required": [
+          "semantics",
+          "component_names",
+          "component_units",
+          "covariance"
+        ],
+        "title": "MeasurementUncertainty",
+        "type": "object"
+      },
+      "MeasurementValues": {
+        "items": {
+          "$ref": "#/$defs/StrictFiniteFloat"
+        },
+        "type": "array"
+      },
+      "ModelRef": {
+        "additionalProperties": false,
+        "description": "A data-only reference to a configured scientific submodel.",
+        "properties": {
+          "configuration": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Configuration",
+            "type": "object"
+          },
+          "interface_version": {
+            "$ref": "#/$defs/SchemaVersion"
+          },
+          "model_id": {
+            "$ref": "#/$defs/StableModelId"
+          }
+        },
+        "required": [
+          "model_id",
+          "interface_version"
+        ],
+        "title": "ModelRef",
+        "type": "object"
+      },
+      "NamespacedId": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\\.[A-Za-z0-9_.-]+)+/[A-Za-z0-9_.-]+$",
+        "type": "string"
+      },
+      "ObservationMeasurement": {
+        "additionalProperties": false,
+        "description": "An immutable, strict, self-describing standard or custom measurement.",
+        "properties": {
+          "component_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Names",
+            "type": "array"
+          },
+          "component_units": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Units",
+            "type": "array"
+          },
+          "custom_schema_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CustomMeasurementSchemaRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "custom_type": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/NamespacedId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "frame": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FrameRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "measurement_type": {
+            "$ref": "#/$defs/MeasurementType"
+          },
+          "qualifiers": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Qualifiers",
+            "type": "object"
+          },
+          "values": {
+            "$ref": "#/$defs/MeasurementValues"
+          }
+        },
+        "required": [
+          "measurement_type",
+          "values",
+          "component_names",
+          "component_units",
+          "frame",
+          "qualifiers"
+        ],
+        "title": "ObservationMeasurement",
+        "type": "object"
+      },
+      "ObservationSubjectRef": {
+        "discriminator": {
+          "mapping": {
+            "KNOWN_OBJECT": "#/$defs/KnownObjectSubjectRef",
+            "TRACKLET": "#/$defs/TrackletSubjectRef",
+            "UNASSOCIATED": "#/$defs/UnassociatedSubjectRef"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/KnownObjectSubjectRef"
+          },
+          {
+            "$ref": "#/$defs/TrackletSubjectRef"
+          },
+          {
+            "$ref": "#/$defs/UnassociatedSubjectRef"
+          }
+        ]
+      },
+      "ReferenceEllipsoid": {
+        "description": "Reference ellipsoids used only with compatible coordinate representations.",
+        "enum": [
+          "WGS84"
+        ],
+        "title": "ReferenceEllipsoid",
+        "type": "string"
+      },
+      "RequiredFrameMetadata": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "SchemaVersion": {
+        "additionalProperties": false,
+        "description": "An immutable public schema version with forward-compatible minors.",
+        "properties": {
+          "major": {
+            "minimum": 0,
+            "title": "Major",
+            "type": "integer"
+          },
+          "minor": {
+            "minimum": 0,
+            "title": "Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "major",
+          "minor"
+        ],
+        "title": "SchemaVersion",
+        "type": "object"
+      },
+      "Sha256Hex": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "StableModelId": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "StrictFiniteFloat": {
+        "type": "number"
+      },
+      "TimeScale": {
+        "description": "Supported labels for an Epoch's declared time scale.",
+        "enum": [
+          "UTC",
+          "TAI",
+          "TT"
+        ],
+        "title": "TimeScale",
+        "type": "string"
+      },
+      "TrackletSubjectRef": {
+        "additionalProperties": false,
+        "description": "Reference a public tracklet without asserting its truth identity.",
+        "properties": {
+          "kind": {
+            "const": "TRACKLET",
+            "default": "TRACKLET",
+            "title": "Kind",
+            "type": "string"
+          },
+          "tracklet_id": {
+            "$ref": "#/$defs/DefinitionString"
+          }
+        },
+        "required": [
+          "tracklet_id"
+        ],
+        "title": "TrackletSubjectRef",
+        "type": "object"
+      },
+      "UnassociatedSubjectRef": {
+        "additionalProperties": false,
+        "description": "Represent a detection without inventing a public target identity.",
+        "properties": {
+          "kind": {
+            "const": "UNASSOCIATED",
+            "default": "UNASSOCIATED",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "UnassociatedSubjectRef",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "description": "An immutable algorithm-safe observation after the declared error model.",
+    "properties": {
+      "channel": {
+        "const": "REPORTED",
+        "default": "REPORTED",
+        "title": "Channel",
+        "type": "string"
+      },
+      "error_model_ref": {
+        "$ref": "#/$defs/ModelRef"
+      },
+      "event_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "measurement": {
+        "$ref": "#/$defs/ObservationMeasurement"
+      },
+      "measurement_epoch": {
+        "$ref": "#/$defs/Epoch"
+      },
+      "measurement_model_ref": {
+        "$ref": "#/$defs/ModelRef"
+      },
+      "observation_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "sensor_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "subject_ref": {
+        "$ref": "#/$defs/ObservationSubjectRef"
+      },
+      "uncertainty": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/MeasurementUncertainty"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "observation_id",
+      "event_id",
+      "measurement_epoch",
+      "sensor_id",
+      "subject_ref",
+      "measurement_model_ref",
+      "error_model_ref",
+      "measurement"
+    ],
+    "title": "ReportedObservation",
     "type": "object"
   },
   "ResolvedPluginRecord": {
@@ -8173,6 +10334,7 @@
           "IDEAL_OBSERVATIONS",
           "REPORTED_OBSERVATIONS",
           "DELIVERY_SUMMARY",
+          "DELIVERY_RECORDS",
           "COMMAND_TRACE",
           "DIAGNOSTICS"
         ],
@@ -9882,6 +12044,7 @@
           "IDEAL_OBSERVATIONS",
           "REPORTED_OBSERVATIONS",
           "DELIVERY_SUMMARY",
+          "DELIVERY_RECORDS",
           "COMMAND_TRACE",
           "DIAGNOSTICS"
         ],
@@ -11327,6 +13490,1380 @@
       "attitude_model"
     ],
     "title": "SpacecraftDefinition",
+    "type": "object"
+  },
+  "StreamingObservationEnvelope": {
+    "$defs": {
+      "CoordinateRepresentation": {
+        "description": "Coordinate representations supported by public frame references.",
+        "enum": [
+          "CARTESIAN",
+          "GEODETIC"
+        ],
+        "title": "CoordinateRepresentation",
+        "type": "string"
+      },
+      "CovarianceMatrix": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/StrictFiniteFloat"
+          },
+          "type": "array"
+        },
+        "type": "array"
+      },
+      "CustomMeasurementSchemaRef": {
+        "additionalProperties": false,
+        "description": "A location-independent exact schema identity for one custom measurement type.",
+        "properties": {
+          "schema_id": {
+            "$ref": "#/$defs/NamespacedId"
+          },
+          "schema_version": {
+            "$ref": "#/$defs/SchemaVersion"
+          },
+          "sha256": {
+            "$ref": "#/$defs/Sha256Hex"
+          }
+        },
+        "required": [
+          "schema_id",
+          "schema_version",
+          "sha256"
+        ],
+        "title": "CustomMeasurementSchemaRef",
+        "type": "object"
+      },
+      "DefinitionString": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "EarthFixedFrameSpec": {
+        "additionalProperties": false,
+        "description": "Explicit provenance required to interpret an Earth-fixed coordinate frame.",
+        "properties": {
+          "eop_data_id": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "iers_conventions": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "itrf_realization": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          }
+        },
+        "required": [
+          "itrf_realization",
+          "iers_conventions",
+          "eop_data_id"
+        ],
+        "title": "EarthFixedFrameSpec",
+        "type": "object"
+      },
+      "Epoch": {
+        "additionalProperties": false,
+        "description": "An immutable calendar instant whose time scale is always explicit.",
+        "properties": {
+          "time_scale": {
+            "$ref": "#/$defs/TimeScale"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "time_scale"
+        ],
+        "title": "Epoch",
+        "type": "object"
+      },
+      "FrameKind": {
+        "description": "Stable public frame semantics that a backend adapter may implement.",
+        "enum": [
+          "J2000",
+          "EARTH_FIXED",
+          "LVLH",
+          "VVLH",
+          "BODY",
+          "SENSOR"
+        ],
+        "title": "FrameKind",
+        "type": "string"
+      },
+      "FrameRef": {
+        "additionalProperties": false,
+        "description": "An immutable public frame reference without scientific-backend implementation types.",
+        "properties": {
+          "convention": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "earth_fixed": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EarthFixedFrameSpec"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "ellipsoid": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ReferenceEllipsoid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "kind": {
+            "$ref": "#/$defs/FrameKind"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reference_epoch": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Epoch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "representation": {
+            "$ref": "#/$defs/CoordinateRepresentation",
+            "default": "CARTESIAN"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FrameRef",
+        "type": "object"
+      },
+      "IdealObservation": {
+        "additionalProperties": false,
+        "description": "An immutable error-free observation visible to authorized algorithms.",
+        "properties": {
+          "channel": {
+            "const": "IDEAL",
+            "default": "IDEAL",
+            "title": "Channel",
+            "type": "string"
+          },
+          "event_id": {
+            "$ref": "#/$defs/DefinitionString"
+          },
+          "measurement": {
+            "$ref": "#/$defs/ObservationMeasurement"
+          },
+          "measurement_epoch": {
+            "$ref": "#/$defs/Epoch"
+          },
+          "measurement_model_ref": {
+            "$ref": "#/$defs/ModelRef"
+          },
+          "observation_id": {
+            "$ref": "#/$defs/DefinitionString"
+          },
+          "sensor_id": {
+            "$ref": "#/$defs/DefinitionString"
+          },
+          "subject_ref": {
+            "$ref": "#/$defs/ObservationSubjectRef"
+          }
+        },
+        "required": [
+          "observation_id",
+          "event_id",
+          "measurement_epoch",
+          "sensor_id",
+          "subject_ref",
+          "measurement_model_ref",
+          "measurement"
+        ],
+        "title": "IdealObservation",
+        "type": "object"
+      },
+      "JsonValue": {},
+      "KnownObjectSubjectRef": {
+        "additionalProperties": false,
+        "description": "Reference an explicitly authorized public object identity.",
+        "properties": {
+          "kind": {
+            "const": "KNOWN_OBJECT",
+            "default": "KNOWN_OBJECT",
+            "title": "Kind",
+            "type": "string"
+          },
+          "object_id": {
+            "$ref": "#/$defs/DefinitionString"
+          }
+        },
+        "required": [
+          "object_id"
+        ],
+        "title": "KnownObjectSubjectRef",
+        "type": "object"
+      },
+      "MeasurementType": {
+        "description": "Stable measurement payload types supported by the Core boundary.",
+        "enum": [
+          "ANGLES_RA_DEC",
+          "ANGLES_AZ_EL",
+          "RANGE",
+          "RANGE_RATE",
+          "LOS_UNIT_VECTOR",
+          "CUSTOM"
+        ],
+        "title": "MeasurementType",
+        "type": "string"
+      },
+      "MeasurementUncertainty": {
+        "additionalProperties": false,
+        "description": "An immutable declared covariance for reported-minus-ideal residual error.",
+        "properties": {
+          "component_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Names",
+            "type": "array"
+          },
+          "component_units": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Units",
+            "type": "array"
+          },
+          "covariance": {
+            "$ref": "#/$defs/CovarianceMatrix"
+          },
+          "semantics": {
+            "const": "EFFECTIVE_RESIDUAL_ERROR_COVARIANCE_V1",
+            "title": "Semantics",
+            "type": "string"
+          }
+        },
+        "required": [
+          "semantics",
+          "component_names",
+          "component_units",
+          "covariance"
+        ],
+        "title": "MeasurementUncertainty",
+        "type": "object"
+      },
+      "MeasurementValues": {
+        "items": {
+          "$ref": "#/$defs/StrictFiniteFloat"
+        },
+        "type": "array"
+      },
+      "ModelRef": {
+        "additionalProperties": false,
+        "description": "A data-only reference to a configured scientific submodel.",
+        "properties": {
+          "configuration": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Configuration",
+            "type": "object"
+          },
+          "interface_version": {
+            "$ref": "#/$defs/SchemaVersion"
+          },
+          "model_id": {
+            "$ref": "#/$defs/StableModelId"
+          }
+        },
+        "required": [
+          "model_id",
+          "interface_version"
+        ],
+        "title": "ModelRef",
+        "type": "object"
+      },
+      "NamespacedId": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\\.[A-Za-z0-9_.-]+)+/[A-Za-z0-9_.-]+$",
+        "type": "string"
+      },
+      "ObservationMeasurement": {
+        "additionalProperties": false,
+        "description": "An immutable, strict, self-describing standard or custom measurement.",
+        "properties": {
+          "component_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Names",
+            "type": "array"
+          },
+          "component_units": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Units",
+            "type": "array"
+          },
+          "custom_schema_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CustomMeasurementSchemaRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "custom_type": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/NamespacedId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "frame": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FrameRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "measurement_type": {
+            "$ref": "#/$defs/MeasurementType"
+          },
+          "qualifiers": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Qualifiers",
+            "type": "object"
+          },
+          "values": {
+            "$ref": "#/$defs/MeasurementValues"
+          }
+        },
+        "required": [
+          "measurement_type",
+          "values",
+          "component_names",
+          "component_units",
+          "frame",
+          "qualifiers"
+        ],
+        "title": "ObservationMeasurement",
+        "type": "object"
+      },
+      "ObservationSubjectRef": {
+        "discriminator": {
+          "mapping": {
+            "KNOWN_OBJECT": "#/$defs/KnownObjectSubjectRef",
+            "TRACKLET": "#/$defs/TrackletSubjectRef",
+            "UNASSOCIATED": "#/$defs/UnassociatedSubjectRef"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/KnownObjectSubjectRef"
+          },
+          {
+            "$ref": "#/$defs/TrackletSubjectRef"
+          },
+          {
+            "$ref": "#/$defs/UnassociatedSubjectRef"
+          }
+        ]
+      },
+      "ReferenceEllipsoid": {
+        "description": "Reference ellipsoids used only with compatible coordinate representations.",
+        "enum": [
+          "WGS84"
+        ],
+        "title": "ReferenceEllipsoid",
+        "type": "string"
+      },
+      "ReportedObservation": {
+        "additionalProperties": false,
+        "description": "An immutable algorithm-safe observation after the declared error model.",
+        "properties": {
+          "channel": {
+            "const": "REPORTED",
+            "default": "REPORTED",
+            "title": "Channel",
+            "type": "string"
+          },
+          "error_model_ref": {
+            "$ref": "#/$defs/ModelRef"
+          },
+          "event_id": {
+            "$ref": "#/$defs/DefinitionString"
+          },
+          "measurement": {
+            "$ref": "#/$defs/ObservationMeasurement"
+          },
+          "measurement_epoch": {
+            "$ref": "#/$defs/Epoch"
+          },
+          "measurement_model_ref": {
+            "$ref": "#/$defs/ModelRef"
+          },
+          "observation_id": {
+            "$ref": "#/$defs/DefinitionString"
+          },
+          "sensor_id": {
+            "$ref": "#/$defs/DefinitionString"
+          },
+          "subject_ref": {
+            "$ref": "#/$defs/ObservationSubjectRef"
+          },
+          "uncertainty": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/MeasurementUncertainty"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "observation_id",
+          "event_id",
+          "measurement_epoch",
+          "sensor_id",
+          "subject_ref",
+          "measurement_model_ref",
+          "error_model_ref",
+          "measurement"
+        ],
+        "title": "ReportedObservation",
+        "type": "object"
+      },
+      "RequiredFrameMetadata": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "SchemaVersion": {
+        "additionalProperties": false,
+        "description": "An immutable public schema version with forward-compatible minors.",
+        "properties": {
+          "major": {
+            "minimum": 0,
+            "title": "Major",
+            "type": "integer"
+          },
+          "minor": {
+            "minimum": 0,
+            "title": "Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "major",
+          "minor"
+        ],
+        "title": "SchemaVersion",
+        "type": "object"
+      },
+      "Sha256Hex": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "StableModelId": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "StrictFiniteFloat": {
+        "type": "number"
+      },
+      "TimeScale": {
+        "description": "Supported labels for an Epoch's declared time scale.",
+        "enum": [
+          "UTC",
+          "TAI",
+          "TT"
+        ],
+        "title": "TimeScale",
+        "type": "string"
+      },
+      "TrackletSubjectRef": {
+        "additionalProperties": false,
+        "description": "Reference a public tracklet without asserting its truth identity.",
+        "properties": {
+          "kind": {
+            "const": "TRACKLET",
+            "default": "TRACKLET",
+            "title": "Kind",
+            "type": "string"
+          },
+          "tracklet_id": {
+            "$ref": "#/$defs/DefinitionString"
+          }
+        },
+        "required": [
+          "tracklet_id"
+        ],
+        "title": "TrackletSubjectRef",
+        "type": "object"
+      },
+      "UnassociatedSubjectRef": {
+        "additionalProperties": false,
+        "description": "Represent a detection without inventing a public target identity.",
+        "properties": {
+          "kind": {
+            "const": "UNASSOCIATED",
+            "default": "UNASSOCIATED",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "UnassociatedSubjectRef",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "description": "A minimal successful-delivery envelope for one revalidated observation.\n\nCore cannot independently prove the DELIVERED outcome because the envelope\nintentionally contains no DeliveryRecord. Engine may construct this model only\nafter the corresponding DELIVERED record passes its lineage checks.",
+    "properties": {
+      "delivery_epoch": {
+        "$ref": "#/$defs/Epoch"
+      },
+      "event_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "observation": {
+        "discriminator": {
+          "mapping": {
+            "IDEAL": "#/$defs/IdealObservation",
+            "REPORTED": "#/$defs/ReportedObservation"
+          },
+          "propertyName": "channel"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/IdealObservation"
+          },
+          {
+            "$ref": "#/$defs/ReportedObservation"
+          }
+        ],
+        "title": "Observation"
+      }
+    },
+    "required": [
+      "event_id",
+      "delivery_epoch",
+      "observation"
+    ],
+    "title": "StreamingObservationEnvelope",
+    "type": "object"
+  },
+  "TrackletSubjectRef": {
+    "$defs": {
+      "DefinitionString": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "description": "Reference a public tracklet without asserting its truth identity.",
+    "properties": {
+      "kind": {
+        "const": "TRACKLET",
+        "default": "TRACKLET",
+        "title": "Kind",
+        "type": "string"
+      },
+      "tracklet_id": {
+        "$ref": "#/$defs/DefinitionString"
+      }
+    },
+    "required": [
+      "tracklet_id"
+    ],
+    "title": "TrackletSubjectRef",
+    "type": "object"
+  },
+  "TruthManeuver": {
+    "$defs": {
+      "AttitudeState": {
+        "additionalProperties": false,
+        "description": "An immutable reference-to-body attitude quaternion at an explicit epoch.",
+        "properties": {
+          "angular_velocity_body_wrt_reference_rad_s": {
+            "anyOf": [
+              {
+                "maxItems": 3,
+                "minItems": 3,
+                "prefixItems": [
+                  {
+                    "$ref": "#/$defs/StrictFiniteFloat"
+                  },
+                  {
+                    "$ref": "#/$defs/StrictFiniteFloat"
+                  },
+                  {
+                    "$ref": "#/$defs/StrictFiniteFloat"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Angular Velocity Body Wrt Reference Rad S"
+          },
+          "epoch": {
+            "$ref": "#/$defs/Epoch"
+          },
+          "reference_frame": {
+            "$ref": "#/$defs/FrameRef"
+          },
+          "rotation_reference_to_body_wxyz": {
+            "maxItems": 4,
+            "minItems": 4,
+            "prefixItems": [
+              {
+                "$ref": "#/$defs/StrictFiniteFloat"
+              },
+              {
+                "$ref": "#/$defs/StrictFiniteFloat"
+              },
+              {
+                "$ref": "#/$defs/StrictFiniteFloat"
+              },
+              {
+                "$ref": "#/$defs/StrictFiniteFloat"
+              }
+            ],
+            "title": "Rotation Reference To Body Wxyz",
+            "type": "array"
+          }
+        },
+        "required": [
+          "epoch",
+          "reference_frame",
+          "rotation_reference_to_body_wxyz"
+        ],
+        "title": "AttitudeState",
+        "type": "object"
+      },
+      "CartesianState": {
+        "additionalProperties": false,
+        "description": "An immutable three-dimensional position and velocity state in an explicit frame.",
+        "properties": {
+          "epoch": {
+            "$ref": "#/$defs/Epoch"
+          },
+          "frame": {
+            "$ref": "#/$defs/FrameRef"
+          },
+          "position_m": {
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "$ref": "#/$defs/FiniteComponent"
+              },
+              {
+                "$ref": "#/$defs/FiniteComponent"
+              },
+              {
+                "$ref": "#/$defs/FiniteComponent"
+              }
+            ],
+            "title": "Position M",
+            "type": "array"
+          },
+          "velocity_mps": {
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "$ref": "#/$defs/FiniteComponent"
+              },
+              {
+                "$ref": "#/$defs/FiniteComponent"
+              },
+              {
+                "$ref": "#/$defs/FiniteComponent"
+              }
+            ],
+            "title": "Velocity Mps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "epoch",
+          "frame",
+          "position_m",
+          "velocity_mps"
+        ],
+        "title": "CartesianState",
+        "type": "object"
+      },
+      "CoordinateRepresentation": {
+        "description": "Coordinate representations supported by public frame references.",
+        "enum": [
+          "CARTESIAN",
+          "GEODETIC"
+        ],
+        "title": "CoordinateRepresentation",
+        "type": "string"
+      },
+      "DefinitionString": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "EarthFixedFrameSpec": {
+        "additionalProperties": false,
+        "description": "Explicit provenance required to interpret an Earth-fixed coordinate frame.",
+        "properties": {
+          "eop_data_id": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "iers_conventions": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "itrf_realization": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          }
+        },
+        "required": [
+          "itrf_realization",
+          "iers_conventions",
+          "eop_data_id"
+        ],
+        "title": "EarthFixedFrameSpec",
+        "type": "object"
+      },
+      "Epoch": {
+        "additionalProperties": false,
+        "description": "An immutable calendar instant whose time scale is always explicit.",
+        "properties": {
+          "time_scale": {
+            "$ref": "#/$defs/TimeScale"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "time_scale"
+        ],
+        "title": "Epoch",
+        "type": "object"
+      },
+      "FiniteComponent": {
+        "type": "number"
+      },
+      "FrameKind": {
+        "description": "Stable public frame semantics that a backend adapter may implement.",
+        "enum": [
+          "J2000",
+          "EARTH_FIXED",
+          "LVLH",
+          "VVLH",
+          "BODY",
+          "SENSOR"
+        ],
+        "title": "FrameKind",
+        "type": "string"
+      },
+      "FrameRef": {
+        "additionalProperties": false,
+        "description": "An immutable public frame reference without scientific-backend implementation types.",
+        "properties": {
+          "convention": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "earth_fixed": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EarthFixedFrameSpec"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "ellipsoid": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ReferenceEllipsoid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "kind": {
+            "$ref": "#/$defs/FrameKind"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reference_epoch": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Epoch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "representation": {
+            "$ref": "#/$defs/CoordinateRepresentation",
+            "default": "CARTESIAN"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FrameRef",
+        "type": "object"
+      },
+      "ManeuverTruthSource": {
+        "description": "The authoritative input lineage that caused an executed truth maneuver.",
+        "enum": [
+          "PLANNED",
+          "COMMAND"
+        ],
+        "title": "ManeuverTruthSource",
+        "type": "string"
+      },
+      "ReferenceEllipsoid": {
+        "description": "Reference ellipsoids used only with compatible coordinate representations.",
+        "enum": [
+          "WGS84"
+        ],
+        "title": "ReferenceEllipsoid",
+        "type": "string"
+      },
+      "RequiredFrameMetadata": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "StrictFiniteFloat": {
+        "type": "number"
+      },
+      "TimeScale": {
+        "description": "Supported labels for an Epoch's declared time scale.",
+        "enum": [
+          "UTC",
+          "TAI",
+          "TT"
+        ],
+        "title": "TimeScale",
+        "type": "string"
+      },
+      "TruthState": {
+        "additionalProperties": false,
+        "description": "An immutable simulation-truth snapshot for one entity at one Cartesian epoch.",
+        "properties": {
+          "attitude_state": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AttitudeState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "cartesian_state": {
+            "$ref": "#/$defs/CartesianState"
+          },
+          "entity_id": {
+            "$ref": "#/$defs/DefinitionString"
+          },
+          "mass_kg": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mass Kg"
+          }
+        },
+        "required": [
+          "entity_id",
+          "cartesian_state"
+        ],
+        "title": "TruthState",
+        "type": "object"
+      },
+      "Vector3": {
+        "maxItems": 3,
+        "minItems": 3,
+        "prefixItems": [
+          {
+            "$ref": "#/$defs/StrictFiniteFloat"
+          },
+          {
+            "$ref": "#/$defs/StrictFiniteFloat"
+          },
+          {
+            "$ref": "#/$defs/StrictFiniteFloat"
+          }
+        ],
+        "type": "array"
+      }
+    },
+    "additionalProperties": false,
+    "description": "An immutable fact recording one executed J2000 truth maneuver and its snapshots.",
+    "properties": {
+      "actual_delta_v_j2000_mps": {
+        "$ref": "#/$defs/Vector3"
+      },
+      "entity_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "executed_epoch": {
+        "$ref": "#/$defs/Epoch"
+      },
+      "maneuver_event_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "scheduled_epoch": {
+        "$ref": "#/$defs/Epoch"
+      },
+      "source_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "source_kind": {
+        "$ref": "#/$defs/ManeuverTruthSource"
+      },
+      "state_after": {
+        "$ref": "#/$defs/TruthState"
+      },
+      "state_before": {
+        "$ref": "#/$defs/TruthState"
+      }
+    },
+    "required": [
+      "maneuver_event_id",
+      "source_kind",
+      "source_id",
+      "entity_id",
+      "scheduled_epoch",
+      "executed_epoch",
+      "actual_delta_v_j2000_mps",
+      "state_before",
+      "state_after"
+    ],
+    "title": "TruthManeuver",
+    "type": "object"
+  },
+  "TruthState": {
+    "$defs": {
+      "AttitudeState": {
+        "additionalProperties": false,
+        "description": "An immutable reference-to-body attitude quaternion at an explicit epoch.",
+        "properties": {
+          "angular_velocity_body_wrt_reference_rad_s": {
+            "anyOf": [
+              {
+                "maxItems": 3,
+                "minItems": 3,
+                "prefixItems": [
+                  {
+                    "$ref": "#/$defs/StrictFiniteFloat"
+                  },
+                  {
+                    "$ref": "#/$defs/StrictFiniteFloat"
+                  },
+                  {
+                    "$ref": "#/$defs/StrictFiniteFloat"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Angular Velocity Body Wrt Reference Rad S"
+          },
+          "epoch": {
+            "$ref": "#/$defs/Epoch"
+          },
+          "reference_frame": {
+            "$ref": "#/$defs/FrameRef"
+          },
+          "rotation_reference_to_body_wxyz": {
+            "maxItems": 4,
+            "minItems": 4,
+            "prefixItems": [
+              {
+                "$ref": "#/$defs/StrictFiniteFloat"
+              },
+              {
+                "$ref": "#/$defs/StrictFiniteFloat"
+              },
+              {
+                "$ref": "#/$defs/StrictFiniteFloat"
+              },
+              {
+                "$ref": "#/$defs/StrictFiniteFloat"
+              }
+            ],
+            "title": "Rotation Reference To Body Wxyz",
+            "type": "array"
+          }
+        },
+        "required": [
+          "epoch",
+          "reference_frame",
+          "rotation_reference_to_body_wxyz"
+        ],
+        "title": "AttitudeState",
+        "type": "object"
+      },
+      "CartesianState": {
+        "additionalProperties": false,
+        "description": "An immutable three-dimensional position and velocity state in an explicit frame.",
+        "properties": {
+          "epoch": {
+            "$ref": "#/$defs/Epoch"
+          },
+          "frame": {
+            "$ref": "#/$defs/FrameRef"
+          },
+          "position_m": {
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "$ref": "#/$defs/FiniteComponent"
+              },
+              {
+                "$ref": "#/$defs/FiniteComponent"
+              },
+              {
+                "$ref": "#/$defs/FiniteComponent"
+              }
+            ],
+            "title": "Position M",
+            "type": "array"
+          },
+          "velocity_mps": {
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "$ref": "#/$defs/FiniteComponent"
+              },
+              {
+                "$ref": "#/$defs/FiniteComponent"
+              },
+              {
+                "$ref": "#/$defs/FiniteComponent"
+              }
+            ],
+            "title": "Velocity Mps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "epoch",
+          "frame",
+          "position_m",
+          "velocity_mps"
+        ],
+        "title": "CartesianState",
+        "type": "object"
+      },
+      "CoordinateRepresentation": {
+        "description": "Coordinate representations supported by public frame references.",
+        "enum": [
+          "CARTESIAN",
+          "GEODETIC"
+        ],
+        "title": "CoordinateRepresentation",
+        "type": "string"
+      },
+      "DefinitionString": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "EarthFixedFrameSpec": {
+        "additionalProperties": false,
+        "description": "Explicit provenance required to interpret an Earth-fixed coordinate frame.",
+        "properties": {
+          "eop_data_id": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "iers_conventions": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          },
+          "itrf_realization": {
+            "$ref": "#/$defs/RequiredFrameMetadata"
+          }
+        },
+        "required": [
+          "itrf_realization",
+          "iers_conventions",
+          "eop_data_id"
+        ],
+        "title": "EarthFixedFrameSpec",
+        "type": "object"
+      },
+      "Epoch": {
+        "additionalProperties": false,
+        "description": "An immutable calendar instant whose time scale is always explicit.",
+        "properties": {
+          "time_scale": {
+            "$ref": "#/$defs/TimeScale"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "time_scale"
+        ],
+        "title": "Epoch",
+        "type": "object"
+      },
+      "FiniteComponent": {
+        "type": "number"
+      },
+      "FrameKind": {
+        "description": "Stable public frame semantics that a backend adapter may implement.",
+        "enum": [
+          "J2000",
+          "EARTH_FIXED",
+          "LVLH",
+          "VVLH",
+          "BODY",
+          "SENSOR"
+        ],
+        "title": "FrameKind",
+        "type": "string"
+      },
+      "FrameRef": {
+        "additionalProperties": false,
+        "description": "An immutable public frame reference without scientific-backend implementation types.",
+        "properties": {
+          "convention": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "earth_fixed": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EarthFixedFrameSpec"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "ellipsoid": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ReferenceEllipsoid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "kind": {
+            "$ref": "#/$defs/FrameKind"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequiredFrameMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reference_epoch": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Epoch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "representation": {
+            "$ref": "#/$defs/CoordinateRepresentation",
+            "default": "CARTESIAN"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FrameRef",
+        "type": "object"
+      },
+      "ReferenceEllipsoid": {
+        "description": "Reference ellipsoids used only with compatible coordinate representations.",
+        "enum": [
+          "WGS84"
+        ],
+        "title": "ReferenceEllipsoid",
+        "type": "string"
+      },
+      "RequiredFrameMetadata": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "StrictFiniteFloat": {
+        "type": "number"
+      },
+      "TimeScale": {
+        "description": "Supported labels for an Epoch's declared time scale.",
+        "enum": [
+          "UTC",
+          "TAI",
+          "TT"
+        ],
+        "title": "TimeScale",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "description": "An immutable simulation-truth snapshot for one entity at one Cartesian epoch.",
+    "properties": {
+      "attitude_state": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AttitudeState"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "cartesian_state": {
+        "$ref": "#/$defs/CartesianState"
+      },
+      "entity_id": {
+        "$ref": "#/$defs/DefinitionString"
+      },
+      "mass_kg": {
+        "anyOf": [
+          {
+            "exclusiveMinimum": 0.0,
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Mass Kg"
+      }
+    },
+    "required": [
+      "entity_id",
+      "cartesian_state"
+    ],
+    "title": "TruthState",
+    "type": "object"
+  },
+  "UnassociatedSubjectRef": {
+    "additionalProperties": false,
+    "description": "Represent a detection without inventing a public target identity.",
+    "properties": {
+      "kind": {
+        "const": "UNASSOCIATED",
+        "default": "UNASSOCIATED",
+        "title": "Kind",
+        "type": "string"
+      }
+    },
+    "title": "UnassociatedSubjectRef",
     "type": "object"
   }
 }

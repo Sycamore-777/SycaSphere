@@ -42,9 +42,29 @@ SycaSphere 的核心价值不是锁定一套内置算法，而是让用户自己
 
 当前优先实现本地 Python 插件。容器和远程服务保留协议边界，但不要求在第一开发阶段完成。MATLAB/C++ 专用适配器不进入当前核心。
 
-截至 2026-07-26，仓库已实现的是后端中立的 Core 输入契约；本文描述的 Algorithm
-Gateway、Batch/Streaming 生命周期、观测结果、评价、Platform 运行记录和持久化仍为
-计划接口，不表示已有可执行运行时。
+截至 2026-07-28，仓库实际交付边界如下：
+
+- Core 已实现 `AttitudeState`、`TruthState`、`TruthManeuver`、`ObservationEvent`、`ObservationMeasurement`、`IdealObservation`、`ReportedObservation`、`MeasurementUncertainty`、`ObservationDeliveryRecord`、`DeliverySummary` 和 `StreamingObservationEnvelope`。
+- Engine 执行、Orekit 适配、Sim 保留策略、存储、算法和前端实现仍为计划。
+- 先分配 `event_id`，完成几何检查后一次性创建不可变 Event，不创建可回填的半成品。
+- Event 只跟随 ObservationSchedule 触发。积分步、Truth 输出采样和前端渲染帧均不得隐式产生 Event。
+- 每个 ObservationSchedule 的交付通道由 `error_profile_id` 唯一决定： `error_profile_id is None` 选择 IDEAL；`error_profile_id` 存在选择 REPORTED。
+- OutputRequirement 只控制 artifact 持久化；Engine 仍必须生成所选交付通道需要的 Ideal 或 Reported payload，不能因为未请求对应 artifact 而跳过科学流水线。
+- 算法只接收成功交付的 Ideal 或 Reported。
+- 链路延迟和丢包属于 LinkModel，不属于 ErrorPipeline。
+- 首版 `StreamingObservationEnvelope` 使用 `delivery_epoch`，不包含 `arrival_time` 或 `sequence_number`。
+- 逐事件交付记录通过显式 `DELIVERY_RECORDS` 输出要求控制，不要求全部常驻内存。
+- Sim 后续默认使用 TRANSIENT，只保留最近一次临时运行。
+- 所有机器字段和枚举使用稳定英文值；后续前端必须提供中文标签、说明和磁盘占用提示。
+- 中文文案不写入 Manifest、科学哈希或稳定数据库枚举。
+- `IdealObservation` 与 `ReportedObservation` 是两个独立模型；算法直接读取被授权的模型，不增加 `AlgorithmObservationView`。
+- 首版算法只接收成功交付的 Ideal/Reported，不提供 `NonDetectionReport`。
+- 首版链路只模拟延迟和丢包，不模拟乱序、重复、重传或多次交付尝试。
+- Engine 后续保证每个算法输入流 FIFO；链路延迟不改变测量顺序。
+
+上列结果类型及其不可变、算法安全 Schema 已在 Core 交付；它们的实际生成、交付、
+持久化和消费尚未实现。本文描述的 Algorithm Gateway、Batch/Streaming 生命周期、
+评价、Platform 运行记录和持久化仍为计划接口，不表示已有可执行运行时。
 
 ---
 
@@ -93,7 +113,9 @@ flowchart TB
 `link_models`。首版所有空间对象的初始状态时刻必须与
 `synchronization_epoch` 完全相等；未来可兼容升级为允许每个对象从不晚于同步时刻的
 状态分别预推进，且不改变首版数据含义。这些 Core 契约已经实现，Engine 准备和后续
-算法交付尚未实现。
+算法交付尚未实现。Core 同时已经实现 Truth/Observation/Delivery 结果数据形状；
+Algorithm Gateway 未来只能消费被 Engine 标记为成功交付的所选 Ideal 或 Reported
+payload，不得从交付失败记录恢复或伪造观测。
 
 ---
 
@@ -180,9 +202,11 @@ Manifest 应当进一步声明：
 - 是否支持取消；
 - 是否支持状态检查点；
 - CPU、内存、GPU 和建议超时；
-- 在线算法的排序和迟到数据策略。
+- 首版在线算法对 Engine FIFO 成功交付流的消费能力。
 
 平台只能依据 manifest 暴露可选算法，不得靠算法名称猜测能力。
+乱序、重复、重传、迟到重排和多次交付尝试不属于首版链路或算法 Manifest；未来若
+引入，必须作为独立兼容性设计增加能力字段。
 
 ---
 
@@ -262,6 +286,10 @@ mission_context:
 | `REPORTED` | ReportedObservation | 平台统一误差、算法公平比较。 |
 | `DIAGNOSTIC_PAIR` | 配对 Ideal + Reported | 仅开发诊断，不用于正式盲测。 |
 
+Core 已实现的正式 Engine 交付只使用 IDEAL 或 REPORTED。`DIAGNOSTIC_PAIR` 是未来
+Platform 授权的诊断视图概念，不是 Core Observation channel，也不得进入正式算法
+输入。
+
 ### 6.2 噪声责任
 
 `ExperimentDefinition` 必须同时声明：
@@ -282,10 +310,17 @@ observation_policy:
 
 - `noise_responsibility=PLATFORM` 时通道必须是 REPORTED；
 - `noise_responsibility=ALGORITHM` 时通道必须是 IDEAL；
+- Engine 科学输入中，ObservationSchedule 的 `error_profile_id is None` 选择 IDEAL，
+  存在时选择 REPORTED；未来 ExperimentDefinition 只能约束和校验该选择，不能在交付
+  阶段改写它；
+- `IDEAL_OBSERVATIONS`、`REPORTED_OBSERVATIONS`、`DELIVERY_SUMMARY` 和
+  `DELIVERY_RECORDS` 只控制 artifact 持久化，不选择算法通道；
 - 算法端加噪必须记录噪声配置、随机种子和实现版本；
 - 平台端加噪可以公开误差分布参数，但不得向被测算法暴露本次误差样本；
 - 算法不得在运行时自行切换观测通道；
 - 漏测事件不发送零值或 NaN 观测；
+- 几何拒绝、漏测、质量拒绝和链路丢包只进入
+  `ObservationDeliveryRecord`/`DeliverySummary`，算法只接收 DELIVERED payload；
 - 正式评测禁止读取 TruthState。
 - 同一科学时刻先执行机动，再用机动后状态尝试观测；算法网关不得把同刻观测重新解释
   为机动前观测。
@@ -359,6 +394,10 @@ BatchAlgorithmRequest
 - 是否需要机动假设；
 - 自定义产物限制。
 
+`observation_dataset_ref` 只能解析到最终成功交付集合；默认按 measurement epoch
+规范排序。逐事件失败记录、丢失 payload、另一观测通道和 Truth 不属于
+BatchAlgorithmRequest。
+
 ### 7.4 Python Protocol
 
 ```python
@@ -421,7 +460,7 @@ BatchAlgorithmResult
 
 - 会话；
 - 状态；
-- 到达时序；
+- 成功交付时序；
 - 预测；
 - 检查点；
 - 故障和恢复；
@@ -457,38 +496,37 @@ stateDiagram-v2
 - 观测通道；
 - 随机种子；
 - 起始时间；
-- 排序策略；
 - 输出频率；
 - 检查点策略。
+
+在线模式中的时序仅指成功交付时序。首版 `StreamingSessionRequest` 不包含排序策略；
+每个算法输入流的 FIFO 顺序由 Engine 固定保证，调用方不能在会话请求中配置重排。
 
 ### 8.4 StreamingObservationEnvelope
 
 ```text
 StreamingObservationEnvelope
-├── session_id
-├── sequence_number
-├── measurement_epoch
-├── arrival_time
-├── observation
-├── idempotency_key
-└── end_of_window
+├── event_id
+├── delivery_epoch
+└── observation: IdealObservation | ReportedObservation
 ```
 
-### 8.5 当前时序策略
+Core 已实现的信封只表示一次成功科学交付。`event_id` 必须等于 Observation 的
+`event_id`，`delivery_epoch` 与 measurement epoch 使用相同 TimeScale 且不得更早。
+session ID、窗口边界和计划中的 Algorithm Gateway 生命周期由会话管理器在信封之外
+维护，不得把 transport lifecycle 字段回填到 Core 科学对象。
 
-当前版本提供两种显式测试配置：
+### 8.5 首版时序策略
 
-1. `MEASUREMENT_TIME_ORDERED`：按 measurement_epoch 单调发送，用于基础算法验证；
-2. `ARRIVAL_TIME_ORDERED`：按 arrival_time 发送，用于真实在线链路语义。
+首版 Engine 链路模型只模拟延迟和丢包，并保证每个算法输入流 FIFO；延迟不改变测量
+顺序。批算法读取最终成功交付集合并按 measurement epoch 规范排序。Streaming
+算法按信封的 `delivery_epoch` 获得成功交付 payload，同时从 Observation 读取
+`measurement_epoch`。
 
-首个实现可以限定 `ARRIVAL_TIME_ORDERED` 数据仍不产生超出算法能力的迟到重排，但数据模型必须保留 measurement_epoch 和 arrival_time。以后支持有界乱序时，不需要修改核心消息结构。
-
-算法 manifest 必须声明：
-
-- 是否接受迟到观测；
-- 最大允许迟到；
-- 重复消息处理策略；
-- 是否支持检查点。
+首版不提供乱序、重复、重传、delivery sequence、attempt ID、duplicate ID 或
+retransmission count。未来引入任何这类链路语义时，必须单独设计 transport/算法能力
+契约；不得改变已经发布的最小 Core 信封含义。检查点能力仍由计划中的 Streaming
+Algorithm Manifest 独立声明。
 
 ### 8.6 Python Protocol
 
@@ -554,7 +592,8 @@ class StreamingAlgorithm(Protocol):
 
 ### 9.1 插件发现
 
-当前使用 Python package entry points 发现插件，避免用户修改 SycaSphere 源码。
+计划使用 Python package entry points 发现插件，避免用户修改 SycaSphere 源码；当前
+仓库尚未实现 Algorithm Gateway 或插件发现。
 
 建议使用两个独立 entry point group：
 
@@ -789,7 +828,8 @@ TrackEstimate / ManeuverHypothesis JSON
 - LVLH、VVLH、BODY 和 SENSOR 输出必须包含 owner；
 - 时间转换必须记录时间数据版本；
 - 在线算法获得的所有消息必须包含 measurement_epoch；
-- 需要真实链路模拟时还必须包含 arrival_time。
+- 成功交付的流式信封必须包含 `delivery_epoch`；它与 measurement epoch 同 TimeScale
+  且不得更早。
 
 Platform `RunManifest` 即使后续保留也只是不可变输入 provenance，不包含运行状态、
 开始/结束墙上时间、错误或输出哈希。可变状态和重试尝试分别属于 `RunRecord` 与
@@ -856,10 +896,13 @@ Platform `RunManifest` 即使后续保留也只是不可变输入 provenance，�
 ### Streaming
 
 - open、ingest、advance、snapshot 和 close 生命周期完整；
-- 重复 idempotency key 按声明处理；
-- 时序错误产生标准错误；
+- 只消费 Engine FIFO 的 DELIVERED `StreamingObservationEnvelope`；
+- 信封 event ID、measurement epoch 和 delivery epoch 谱系一致；
+- 交付时序错误产生标准错误；
 - 检查点能够恢复；
 - 输出事件可以追加存储和三维回放。
+
+乱序、重复、重传和多次交付尝试的一致性测试延后，不属于首版验收。
 
 ### 结果与交互
 
@@ -873,9 +916,10 @@ Platform `RunManifest` 即使后续保留也只是不可变输入 provenance，�
 
 ## 17. 开发阶段
 
-以下各阶段均为计划；当前仓库只交付 Core 的定义、机动、计划、
-`SimulationRunRequest` 和 `SimulationExecutionManifest` 契约。Engine/session、
-Ideal/Reported 观测与结果、Algorithm Gateway 和 Platform 生命周期尚未实现。
+以下各阶段均为计划；当前仓库已交付 Core 的定义、机动、计划、
+`SimulationRunRequest`、`SimulationExecutionManifest` 以及
+Truth/Observation/Delivery 结果契约。Engine/session 尚未生成或交付这些结果，
+Algorithm Gateway、算法生命周期、评价、持久化和 Platform 生命周期也尚未实现。
 
 ### 计划：算法注册与离线接口阶段
 
@@ -897,8 +941,8 @@ Ideal/Reported 观测与结果、Algorithm Gateway 和 Platform 生命周期尚�
 
 - StreamingAlgorithm Protocol；
 - session manager；
-- observation envelope；
-- measurement/arrival 时间语义；
+- 消费已实现 Core `StreamingObservationEnvelope` 的适配；
+- measurement/delivery 时间语义；
 - TrackUpdate 和 ManeuverAlert；
 - checkpoint；
 - 一个在线滤波示例算法。

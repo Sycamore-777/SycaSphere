@@ -6,8 +6,8 @@
 文件名    : execution.py
 创建者    : Sycamore
 创建日期  : 2026-07-26
-最后修改  : 2026-07-26
-版本号    : v1.2.0
+最后修改  : 2026-07-29
+版本号    : v1.4.0
 
 ■ 用途说明:
   定义独立仿真引擎可直接验证、准备和执行的自包含不可变科学输入边界。
@@ -20,12 +20,15 @@
 ■ 功能特性:
   ✓ 嵌入完整 SimulationDefinition 并解析所有运行期科学引用
   ✓ 严格验证无符号随机种子、机动能力、时间范围和输出采样
+  ✓ 保持观测输出 artifact 选择与各 schedule 交付通道相互独立
   ✓ 生成排序稳定、可重验且不含运行生命周期状态的科学执行清单
 
 ■ 待办事项:
   - 无
 
 ■ 更新日志:
+  v1.4.0 (2026-07-29): 允许混合 IDEAL/REPORTED schedules 独立选择输出 artifact
+  v1.3.0 (2026-07-28): 增加逐事件交付记录科学输出需求
   v1.2.0 (2026-07-26): 加固运行请求嵌套输入重验及执行清单源输入等价性校验
   v1.1.0 (2026-07-26): 增加不可变仿真执行清单、解析记录和完整性校验
   v1.0.0 (2026-07-26): 创建自包含仿真运行请求契约
@@ -45,7 +48,6 @@ from pydantic import (
     Field,
     JsonValue,
     Strict,
-    StringConstraints,
     field_serializer,
     field_validator,
     model_validator,
@@ -61,6 +63,12 @@ from sycasphere.core._json import (
     freeze_json_object,
     normalize_json_object,
     thaw_json_value,
+)
+from sycasphere.core._validation import (
+    Sha256Hex,
+    StrictNonNegativeInt,
+    snapshot_model_collection,
+    snapshot_model_input,
 )
 from sycasphere.core.entities import (
     GroundStationDefinition,
@@ -92,29 +100,6 @@ type UInt64 = Annotated[
     Strict(),
     Field(ge=0, le=2**64 - 1),
 ]
-type Sha256Hex = Annotated[
-    str,
-    StringConstraints(strict=True, pattern=r"^[0-9a-f]{64}$"),
-]
-type StrictNonNegativeInt = Annotated[
-    int,
-    Strict(),
-    Field(ge=0),
-]
-
-
-def _snapshot_model_input(value: Any) -> Any:
-    """Convert a Pydantic instance to ordinary Python data for boundary revalidation."""
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="python")
-    return value
-
-
-def _snapshot_model_collection(value: Any) -> Any:
-    """Snapshot every Pydantic item in a supported collection input."""
-    if isinstance(value, (frozenset, list, set, tuple)):
-        return tuple(_snapshot_model_input(item) for item in value)
-    return value
 
 
 # =============================👐Seperate👐=============================
@@ -160,6 +145,7 @@ class OutputRequirement(StrEnum):
     IDEAL_OBSERVATIONS = "IDEAL_OBSERVATIONS"
     REPORTED_OBSERVATIONS = "REPORTED_OBSERVATIONS"
     DELIVERY_SUMMARY = "DELIVERY_SUMMARY"
+    DELIVERY_RECORDS = "DELIVERY_RECORDS"
     COMMAND_TRACE = "COMMAND_TRACE"
     DIAGNOSTICS = "DIAGNOSTICS"
 
@@ -225,7 +211,7 @@ class SimulationRunRequest(BaseModel):
     @classmethod
     def snapshot_request_models(cls, value: Any) -> Any:
         """Copy and revalidate every nested model at the public request boundary."""
-        return _snapshot_model_input(value)
+        return snapshot_model_input(value)
 
     @field_validator(
         "observation_schedules",
@@ -236,7 +222,7 @@ class SimulationRunRequest(BaseModel):
     @classmethod
     def snapshot_request_model_collections(cls, value: Any) -> Any:
         """Copy and revalidate every nested record in request collections."""
-        return _snapshot_model_collection(value)
+        return snapshot_model_collection(value)
 
     @field_validator("random_seed", mode="before")
     @classmethod
@@ -332,14 +318,6 @@ class SimulationRunRequest(BaseModel):
                 and schedule.link_model_id not in link_models_by_id
             ):
                 raise ValueError("link_model_id must reference a request link model")
-
-        ## -------------- step: validate reported-observation error consistency ---------
-        if OutputRequirement.REPORTED_OBSERVATIONS in self.output_requirements:
-            for schedule in self.observation_schedules:
-                if schedule.error_profile_id is None:
-                    raise ValueError(
-                        "REPORTED_OBSERVATIONS requires error_profile_id on every schedule"
-                    )
 
         ## -------------- step: validate command identities and capabilities ---------
         command_ids = tuple(command.command_id for command in self.command_timeline)
@@ -443,13 +421,13 @@ class PreparedTimeline(BaseModel):
     @classmethod
     def snapshot_timeline_records(cls, value: Any) -> Any:
         """Revalidate copied nested records instead of trusting Pydantic instances."""
-        return _snapshot_model_collection(value)
+        return snapshot_model_collection(value)
 
     @field_validator("output_sampling", mode="before")
     @classmethod
     def snapshot_output_sampling(cls, value: Any) -> Any:
         """Copy and revalidate prepared sampling rules at the timeline boundary."""
-        return _snapshot_model_input(value)
+        return snapshot_model_input(value)
 
     @field_validator("observation_schedules")
     @classmethod
@@ -507,7 +485,7 @@ class SimulationExecutionManifest(BaseModel):
     @classmethod
     def snapshot_manifest_models(cls, value: Any) -> Any:
         """Copy and revalidate trusted model instances at the manifest boundary."""
-        return _snapshot_model_input(value)
+        return snapshot_model_input(value)
 
     @field_validator(
         "resolved_plugins",
@@ -518,7 +496,7 @@ class SimulationExecutionManifest(BaseModel):
     @classmethod
     def snapshot_manifest_records(cls, value: Any) -> Any:
         """Copy and revalidate every resolved or derived nested record."""
-        return _snapshot_model_collection(value)
+        return snapshot_model_collection(value)
 
     @field_validator("resolved_plugins")
     @classmethod
@@ -672,25 +650,23 @@ class SimulationExecutionManifest(BaseModel):
         """Create a validated manifest from alias-independent scientific snapshots."""
         ## -------------- step: revalidate all supplied model instances ---------
         validated_schema_version = SchemaVersion.model_validate(
-            _snapshot_model_input(schema_version)
+            snapshot_model_input(schema_version)
         )
-        validated_source = SimulationRunRequest.model_validate(
-            _snapshot_model_input(source_request)
-        )
+        validated_source = SimulationRunRequest.model_validate(snapshot_model_input(source_request))
         validated_plugins = tuple(
-            ResolvedPluginRecord.model_validate(_snapshot_model_input(item))
+            ResolvedPluginRecord.model_validate(snapshot_model_input(item))
             for item in resolved_plugins
         )
         validated_data = tuple(
-            ExternalDataRef.model_validate(_snapshot_model_input(item))
+            ExternalDataRef.model_validate(snapshot_model_input(item))
             for item in resolved_external_data
         )
         validated_streams = tuple(
-            DerivedRandomStream.model_validate(_snapshot_model_input(item))
+            DerivedRandomStream.model_validate(snapshot_model_input(item))
             for item in derived_random_streams
         )
         validated_timeline = PreparedTimeline.model_validate(
-            _snapshot_model_input(prepared_timeline)
+            snapshot_model_input(prepared_timeline)
         )
 
         ## -------------- step: order resolved scientific records ---------

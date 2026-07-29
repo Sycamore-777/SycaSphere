@@ -52,10 +52,30 @@ SycaSphere 当前定位为：
 
 这些能力可以在核心模型稳定后扩展，但不得提前污染当前领域边界。
 
-截至 2026-07-26，仓库实际实现的是 `sycasphere-core` 中的不可变领域契约，
-包括仿真定义、机动、观测计划、运行请求和执行清单模型。Engine 的
-`prepare()`/执行/会话、观测与结果生成、Orekit 适配，以及 Platform 的任务、
-实验、运行生命周期和持久化仍是后续计划，不得把下文的目标架构理解为已交付运行时。
+截至 2026-07-28，仓库实际交付边界如下：
+
+- Core 已实现 `AttitudeState`、`TruthState`、`TruthManeuver`、`ObservationEvent`、`ObservationMeasurement`、`IdealObservation`、`ReportedObservation`、`MeasurementUncertainty`、`ObservationDeliveryRecord`、`DeliverySummary` 和 `StreamingObservationEnvelope`。
+- Engine 执行、Orekit 适配、Sim 保留策略、存储、算法和前端实现仍为计划。
+- 先分配 `event_id`，完成几何检查后一次性创建不可变 Event，不创建可回填的半成品。
+- Event 只跟随 ObservationSchedule 触发。积分步、Truth 输出采样和前端渲染帧均不得隐式产生 Event。
+- 每个 ObservationSchedule 的交付通道由 `error_profile_id` 唯一决定： `error_profile_id is None` 选择 IDEAL；`error_profile_id` 存在选择 REPORTED。
+- OutputRequirement 只控制 artifact 持久化；Engine 仍必须生成所选交付通道需要的 Ideal 或 Reported payload，不能因为未请求对应 artifact 而跳过科学流水线。
+- 算法只接收成功交付的 Ideal 或 Reported。
+- 链路延迟和丢包属于 LinkModel，不属于 ErrorPipeline。
+- 首版 `StreamingObservationEnvelope` 使用 `delivery_epoch`，不包含 `arrival_time` 或 `sequence_number`。
+- 逐事件交付记录通过显式 `DELIVERY_RECORDS` 输出要求控制，不要求全部常驻内存。
+- Sim 后续默认使用 TRANSIENT，只保留最近一次临时运行。
+- 所有机器字段和枚举使用稳定英文值；后续前端必须提供中文标签、说明和磁盘占用提示。
+- 中文文案不写入 Manifest、科学哈希或稳定数据库枚举。
+- `IdealObservation` 与 `ReportedObservation` 是两个独立模型；算法直接读取被授权的模型，不增加 `AlgorithmObservationView`。
+- 首版算法只接收成功交付的 Ideal/Reported，不提供 `NonDetectionReport`。
+- 首版链路只模拟延迟和丢包，不模拟乱序、重复、重传或多次交付尝试。
+- Engine 后续保证每个算法输入流 FIFO；链路延迟不改变测量顺序。
+
+上列 Core 类型只定义不可变、可序列化、后端中立的领域契约；Engine 的
+`prepare()`/执行/会话、观测与结果生成，Orekit 科学实现，以及 Platform 的任务、
+实验、运行生命周期和持久化均未随本批次实现。不得把下文目标架构理解为已经存在的
+可执行运行时。
 
 ---
 
@@ -239,11 +259,14 @@ epoch:
 - TAI；
 - TT。
 
-在线观测必须区分：
+在线交付必须区分：
 
 - `measurement_epoch`：物理观测时刻；
-- `arrival_time`：算法获得该观测的时刻；
-- `sequence_number`：消息源序号。
+- `delivery_epoch`：算法获得成功交付 payload 的时刻。
+
+首版 `StreamingObservationEnvelope` 不包含 `arrival_time`、`sequence_number` 或其他
+transport lifecycle 字段。未来若增加 transport 包装，不得改变 Core
+`measurement_epoch`/`delivery_epoch` 的科学语义。
 
 Python `datetime` 不能单独承担全部时间尺度语义。Orekit `AbsoluteDate` 只能存在于 Orekit 适配层，不得跨领域或算法接口传递。
 
@@ -540,7 +563,7 @@ spacecraft:
 | `field_of_view` | 圆锥、矩形、复杂掩膜等视场。 |
 | `visibility_model` | 遮挡、地平、光照、太阳抑制角等。 |
 | `measurement_models` | 可生成的理想观测类型。 |
-| `error_profiles` | 可选的噪声、偏差、漏测和时延配置。 |
+| `error_profiles` | 可选的噪声、偏差、漏测和质量拒绝配置。 |
 | `availability` | 工作时间、占用和故障窗口。 |
 
 ---
@@ -635,50 +658,55 @@ state:
 
 ### 8.2 AttitudeState
 
-姿态状态至少包含：
+Core 已实现的 `AttitudeState` 精确包含：
 
-- 时刻；
-- 参考坐标系；
-- BODY 坐标系；
-- 归一化四元数；
-- 可选角速度和角加速度。
+- `epoch`；
+- `reference_frame`；
+- `rotation_reference_to_body_wxyz`；
+- 可选的 `angular_velocity_body_wrt_reference_rad_s`。
 
-四元数的分量顺序和旋转方向必须在模式中固定，不得依赖库默认值。
+四元数的分量顺序固定为 `(w, x, y, z)`，旋转方向固定为 reference frame 到
+BODY，并且范数必须在 `1e-9` 容差内等于 1，不得静默归一化。角速度未知时使用
+`None`；零角速度必须显式使用三个 `0.0`。角加速度未进入首版公共契约。
 
 ### 8.3 TruthState
 
-`TruthState` 是仿真引擎在某一时刻的真实状态快照，可以包含：
+Core 已实现的 `TruthState` 是未来仿真引擎在某一时刻生成的真实状态快照，精确包含：
 
-- `CartesianState`；
-- `AttitudeState`；
-- 质量；
-- 动力学参数；
-- 派生几何量；
-- 真值事件状态。
+- `entity_id`；
+- `cartesian_state`；
+- 可选 `attitude_state`；
+- 可选 `mass_kg`。
 
-它只对仿真内核、评价器和授权调试视图可见，不能作为正式被测算法输入。
+`epoch` 由 `cartesian_state.epoch` 提供，不重复序列化；存在姿态时，其 epoch 必须与
+CartesianState 完全相等。传感器没有独立 TruthState，其状态由父平台 TruthState、
+安装变换和指向模型推导。动力学参数、派生几何量、设备状态和真值事件状态若由未来
+Engine 生成，使用独立结果契约，不向首版 TruthState 追加字段。
+
+TruthState 只对仿真内核、评价器和授权调试视图可见，不能作为正式被测算法输入。
 
 ### 8.4 TruthManeuver
 
-真实机动和算法机动假设必须使用不同类型。
+Core 已实现的真实机动事实和计划中的算法机动假设必须使用不同类型。
 
-```yaml
-truth_maneuver:
-  id: maneuver-truth-001
-  object_id: target-spacecraft-001
-  maneuver_type: IMPULSIVE
-  epoch:
-    value: "2026-07-17T06:00:00Z"
-    time_scale: UTC
-  delta_v_mps: [0.0, 5.0, 0.0]
-  frame:
-    kind: LVLH
-    owner_id: target-spacecraft-001
-    convention: SYCASPHERE_LVLH_1
-    reference_epoch:
-      value: "2026-07-17T06:00:00Z"
-      time_scale: UTC
+```text
+TruthManeuver
+├── maneuver_event_id
+├── source_kind: PLANNED | COMMAND
+├── source_id
+├── entity_id
+├── scheduled_epoch
+├── executed_epoch
+├── actual_delta_v_j2000_mps
+├── state_before
+└── state_after
 ```
+
+实际 Δv 始终使用权威 J2000 分量。前后 TruthState 必须属于同一实体、使用 J2000
+CartesianState 且时刻等于 `executed_epoch`；两边质量都存在时不得增加。原始
+PlannedTruthManeuver 或 ManeuverCommand 继续由 Manifest/Command Journal 保存，
+TruthManeuver 只通过 `source_kind + source_id` 保存谱系。执行失败不生成
+TruthManeuver。
 
 ---
 
@@ -688,35 +716,70 @@ truth_maneuver:
 
 ```mermaid
 flowchart LR
-    T[TruthState] --> G[Deterministic Measurement Model]
-    G --> I[IdealObservation\n无误差接口]
-    I --> E[ErrorPipeline]
-    E --> R[ReportedObservation\n有误差接口]
-    I --> A1[算法端自行加噪]
-    R --> A2[算法直接处理]
+    S[ObservationSchedule trigger] --> P[preallocate deterministic event_id]
+    P --> G[geometry / visibility / pointing]
+    T[TruthState] --> G
+    G --> E[create immutable ObservationEvent once]
+    E -->|GEOMETRY_REJECTED| D[ObservationDeliveryRecord\n终态事实]
+    E -->|VISIBLE| M[Deterministic Measurement Model]
+    T --> M
+    M --> I[IdealObservation\n无误差接口]
+    Q[ObservationSchedule.error_profile_id] --> C{选择唯一交付通道}
+    I --> C
+    C -->|None: IDEAL| L[LinkModel\ndelay / drop / FIFO]
+    C -->|存在: REPORTED| X[ErrorPipeline]
+    X -->|形成 Reported| R[ReportedObservation\n有误差接口]
+    X -->|SENSOR_MISSED / QUALITY_REJECTED| D
+    R --> L
+    L -->|LINK_DROPPED| D
+    L -->|DELIVERED| D
+    L -->|DELIVERED payload| O[StreamingObservationEnvelope]
+    O --> A[算法]
     T -.仅评价器可见.-> V[Evaluator]
-    A1 --> V
-    A2 --> V
+    A --> V
 ```
+
+几何、可见性和指向检查只判定 Event 的 `geometry_status`，不由 Deterministic
+Measurement Model 产生。Engine 必须在几何检查后一次性创建不可变 Event；
+`GEOMETRY_REJECTED` 直接形成终态交付事实，只有 `VISIBLE` Event 才调用确定性测量模型
+形成 IdealObservation。
+
+一次 Event 的 schedule `error_profile_id` 只选择一个交付通道：`None` 选择 Ideal，
+存在时选择 Reported。所选 payload 必须经过 LinkModel 的延迟、丢包和 FIFO 处理；
+只有 `DELIVERED` 创建 `StreamingObservationEnvelope` 并到达算法，其他终态只形成
+`ObservationDeliveryRecord` 事实。TruthState 仍只对仿真内核、评价器和授权调试视图
+可见，不进入正式算法输入。
 
 ### 9.2 ObservationEvent
 
-`ObservationEvent` 表示一次真实发生或计划发生的观测事件，是理想观测和报告观测的共同来源。
+Core 已实现的 `ObservationEvent` 表示一次由观测计划触发的内部科学事实，是理想观测
+和报告观测的共同来源。一次 schedule occurrence、触发时刻、sensor、target 和
+measurement model invocation 恰好对应一个 Event。Engine 后续必须预分配确定性
+`event_id`，完成几何、可见性和指向检查后一次性构造不可变 Event。
 
 | 字段 | 说明 |
 | --- | --- |
 | `event_id` | 双通道关联主键。 |
+| `schedule_id` | 触发本次事件的观测计划。 |
 | `measurement_epoch` | 物理观测时刻。 |
 | `sensor_id` | 传感器子组件 ID。 |
 | `platform_id` | 父平台 ID。 |
-| `target_ref` | 目标或匿名 tracklet 引用。 |
+| `truth_target_entity_id` | 仅内部科学事实可见的真实目标实体 ID。 |
+| `public_subject_ref` | 算法安全的 KNOWN_OBJECT、TRACKLET 或 UNASSOCIATED 引用。 |
 | `measurement_type` | 观测类型。 |
-| `geometry_status` | 可见、遮挡、超出视场、光照不足等。 |
-| `model_profile_id` | 确定性测量模型。 |
+| `geometry_status` | VISIBLE 或四种明确的几何拒绝终态。 |
+| `measurement_model_ref` | 产生测量的完整确定性模型引用。 |
+
+Event 只由 ObservationSchedule 触发，不随数值积分步、Truth 输出采样或前端渲染帧
+自动产生。几何失败仍生成 Event，但不生成 IdealObservation。
 
 ### 9.3 IdealObservation：无误差接口
 
-`IdealObservation` 是通过可见性、指向和确定性测量模型得到的观测值，但未加入随机和系统误差。
+Core 已实现的 `IdealObservation` 是通过可见性、指向和确定性测量模型得到的算法安全
+观测值，但未加入随机和系统误差。它保存独立 `observation_id`、共同 `event_id`、
+测量时刻、sensor、算法安全 SubjectRef、measurement model ref 和
+`ObservationMeasurement`；不得包含 Truth target、error model、uncertainty 或实际
+误差字段。
 
 无误差并不意味着忽略：
 
@@ -736,7 +799,9 @@ generate_ideal_observation(event, truth_context) -> IdealObservation
 
 ### 9.4 ReportedObservation：有误差接口
 
-`ReportedObservation` 由理想观测经过 `ErrorPipeline` 生成。
+Core 已实现的 `ReportedObservation` 表示未来 ErrorPipeline 由 Ideal 生成的算法安全
+有误差观测。除共同谱系外，它保存独立 `observation_id`、error model ref 和可选
+`MeasurementUncertainty`；不得包含实际噪声样本、真实偏差或 Truth 残差。
 
 ```text
 apply_error_pipeline(ideal, error_profile, seed) -> ReportedObservation | None
@@ -749,19 +814,26 @@ apply_error_pipeline(ideal, error_profile, seed) -> ReportedObservation | None
 3. 时钟偏差和抖动；
 4. 量化；
 5. 离群值；
-6. 漏测；
-7. 到达延迟。
+6. 漏测或质量拒绝。
 
-返回 `None` 表示误差模型没有形成可报告观测；引擎必须另行生成内部 `ObservationDeliveryRecord`，记录 `SENSOR_MISSED` 或 `QUALITY_REJECTED` 等结构化事实。该记录不是观测，不发送给算法。
+返回 `None` 表示误差模型没有形成可报告观测；未来 Engine 必须生成公开 Core
+`ObservationDeliveryRecord` 契约的内部诊断事实，记录 `SENSOR_MISSED` 或
+`QUALITY_REJECTED`。该记录不是 Observation，不发送给算法。
+链路延迟和丢包只由后续 LinkModel 处理，不属于 ErrorPipeline。
 
 ### 9.5 双通道规则
 
 - Ideal 和 Reported 必须共享 `event_id`；
-- 系统可以同时存储两者，但一次正式算法运行只开放所选通道；
+- 两者拥有不同 `observation_id`，并共享 measurement epoch、sensor、SubjectRef 和
+  measurement type；
+- 系统可以按输出要求同时持久化两者，但一次 Event 的算法交付通道只由 schedule 的
+  `error_profile_id` 选择；
 - 算法端加噪时输入为 Ideal；
 - 平台端加噪时输入为 Reported；
 - 正式算法评测不得同时读取 Ideal、Reported 和 Truth；
-- 漏测、质量拒绝和链路丢包由 `ObservationDeliveryRecord` 与聚合的 `DeliverySummary` 记录，但不得向算法发送伪造的零值观测或丢失观测内容；首版不提供 `NonDetectionReport`。
+- 每个 Event 恰好生成一个终态 `ObservationDeliveryRecord`，并聚合为
+  `DeliverySummary`；
+- 漏测、质量拒绝和链路丢包不得用零值、NaN 或伪造 Observation 表示。
 
 ### 9.6 地基与天基观测
 
@@ -778,6 +850,9 @@ apply_error_pipeline(ideal, error_profile, seed) -> ReportedObservation | None
 
 ### 9.7 标准观测类型
 
+Core 使用统一 `ObservationMeasurement`，由测量类型固定维度、分量名、单位、Frame
+和数值范围；不为每个标准类型建立独立 Observation 类。
+
 | 类型 | 数值维度 | 默认表达坐标系 | 说明 |
 | --- | ---: | --- | --- |
 | `ANGLES_RA_DEC` | 2 | J2000 | 赤经、赤纬，单位 rad。 |
@@ -787,7 +862,29 @@ apply_error_pipeline(ideal, error_profile, seed) -> ReportedObservation | None
 | `LOS_UNIT_VECTOR` | 3 | J2000 或 SENSOR | 视线单位矢量。 |
 | `CUSTOM` | 可变 | 显式 | 使用命名空间和独立模式。 |
 
-### 9.8 LOS 派生几何量
+标准测量拒绝未声明的 qualifier；CUSTOM 必须使用命名空间化 type 和带 schema ID、
+SchemaVersion 与 SHA-256 的位置无关 schema 引用。
+
+### 9.8 MeasurementUncertainty
+
+Core 已实现的 `MeasurementUncertainty` 表示确定性修正后剩余误差的算法可见有效
+协方差。它保存与 measurement 完全一致的 component names、units 和有限、对称、
+半正定 covariance；不得保存本次实际误差样本、隐藏偏差或 Truth 残差。`None` 表示
+未知不确定度，显式零 covariance 表示已知零不确定度，两者不得混用。
+
+### 9.9 Delivery 与流式信封
+
+`ObservationDeliveryRecord` 记录一个 Event 的
+`GEOMETRY_REJECTED`、`SENSOR_MISSED`、`QUALITY_REJECTED`、`LINK_DROPPED` 或
+`DELIVERED` 终态，严格校验通道、Ideal/Reported ID、payload hash、delivery epoch 和
+latency 组合。`DeliverySummary` 的五类 outcome 计数之和必须等于 total events。
+
+只有 DELIVERED 产生 `StreamingObservationEnvelope`。该信封只包含 `event_id`、
+`delivery_epoch` 和被成功交付的 Ideal/Reported Observation，不包含 sequence、
+attempt、duplicate 或 retransmission 字段。首版链路执行只支持延迟、丢包和 FIFO。
+逐事件记录是否持久化由 `DELIVERY_RECORDS` 控制，不能影响科学流水线是否执行。
+
+### 9.10 LOS 派生几何量
 
 仿真内部可以保存：
 
@@ -903,8 +1000,13 @@ Core 已实现的 `SimulationRunRequest` 是完整、后端中立的 Engine 科�
 - 首版 `command_timeline` 只包含 `ManeuverCommand`；
 - 首版 `observation_schedules` 只包含 `PERIODIC` 和 `EXPLICIT`；
 - 测量模型和误差模型从 `SensorDefinition` 选择，不在请求顶层重复保存引用；
-- 数据链路仍通过运行级 `link_models` 配置；
+- 数据链路仍通过运行级 `link_models` 配置；首版执行语义只允许延迟、丢包和 FIFO；
 - 主随机种子和输出要求随请求冻结。
+
+ObservationSchedule 的 `error_profile_id` 唯一决定 IDEAL 或 REPORTED 算法交付通道。
+`OutputRequirement.IDEAL_OBSERVATIONS`、`REPORTED_OBSERVATIONS`、
+`DELIVERY_SUMMARY` 和 `DELIVERY_RECORDS` 只决定 artifact 持久化；它们不得选择通道或
+跳过交付通道所需的测量、误差和链路科学流水线。
 
 同一时刻的权威事件顺序为：传播到时刻、保存机动前状态、执行机动、保存机动后事实与
 状态、使用机动后状态尝试观测、最后生成该时刻的常规采样。因此同刻观测是
@@ -962,7 +1064,7 @@ Platform Manifest 同样不得承载可变状态或终态输出。
 
 ## 12. 本地优先存储架构
 
-### 12.1 当前方案
+### 12.1 计划方案
 
 ```mermaid
 flowchart LR
@@ -974,7 +1076,7 @@ flowchart LR
     APP --> BUS[In-process Event Bus\nasyncio/进程内队列]
 ```
 
-当前使用：
+以下均为后续 Platform/Sim 存储计划，当前仓库尚未实现：
 
 - **SQLite**：项目元数据、版本关系、算法注册、任务、实验和运行索引；
 - **YAML/JSON**：可审阅的定义、清单和小型结果；
@@ -982,9 +1084,9 @@ flowchart LR
 - **本地文件目录**：报告、模型、日志、外部数据和其他 artifact；
 - **进程内事件总线**：运行进度和前端推送。
 
-当前不使用 Redis。
+计划中的本地单机运行不使用 Redis。
 
-### 12.2 为什么当前不使用 Redis
+### 12.2 为什么首个计划不使用 Redis
 
 当前范围是本地单机、少量并发和 1 至数十个对象。Redis 会引入额外服务、端口、部署和一致性成本，而目前没有必须由分布式缓存或消息代理解决的问题。
 
@@ -998,9 +1100,10 @@ ArtifactStore
 RuntimeEventBus
 ```
 
-当前实现分别是 SQLite、本地文件系统和进程内事件总线。以后进入多用户或多实例部署时，可以替换为 PostgreSQL、对象存储和 Redis/其他消息系统，而不改变领域模型。
+首个计划实现分别是 SQLite、本地文件系统和进程内事件总线。以后进入多用户或多实例
+部署时，可以替换为 PostgreSQL、对象存储和 Redis/其他消息系统，而不改变领域模型。
 
-### 12.4 推荐项目数据目录
+### 12.4 计划项目数据目录
 
 ```text
 project-data/
@@ -1112,15 +1215,18 @@ CesiumJS 数据不是科学主存储。前端不得反向修改已完成运行�
 - `Epoch`
 - `FrameRef`
 - `CartesianState`
-- `AttitudeState`
-- `TruthState`
-- `TruthManeuver`
-- `ObservationEvent`
-- `IdealObservation`
-- `ReportedObservation`
-- `ObservationDeliveryRecord`
-- `DeliverySummary`
-- `StreamingObservationEnvelope`
+- `AttitudeState`（Core 已实现）
+- `TruthState`（Core 已实现）
+- `TruthManeuver`（Core 已实现）
+- `ObservationSubjectRef`（Core 已实现）
+- `ObservationEvent`（Core 已实现）
+- `ObservationMeasurement`（Core 已实现）
+- `MeasurementUncertainty`（Core 已实现）
+- `IdealObservation`（Core 已实现）
+- `ReportedObservation`（Core 已实现）
+- `ObservationDeliveryRecord`（Core 已实现）
+- `DeliverySummary`（Core 已实现）
+- `StreamingObservationEnvelope`（Core 已实现）
 
 ### 算法与评价结果
 
@@ -1154,14 +1260,18 @@ CesiumJS 数据不是科学主存储。前端不得反向修改已完成运行�
 - `SimulationDefinition`、机动、闭区间时间范围、输出采样以及
   `PERIODIC`/`EXPLICIT` 观测计划；
 - 完整 `SimulationRunRequest` 和不可变 `SimulationExecutionManifest` 数据契约；
+- 姿态、Truth、Observation、测量不确定度、逐事件交付终态、交付汇总和最小流式
+  信封契约；
+- `DELIVERY_RECORDS` 输出要求以及 Ideal/Reported 判别联合的公开 Schema；
 - 公开 API、JSON Schema 快照、单元测试和独立 Core 分发。
 
-### 计划：Engine 与 Orekit 真值/观测
+### 计划：Engine 与 Orekit 执行
 
 - Engine `prepare()`、执行、交互会话和恢复；
 - JVM 生命周期和 J2000 后端映射；
 - 空间对象传播以及地面站和天基平台状态；
-- Ideal/Reported 观测、误差与链路管线；
+- 使用已实现 Core 契约执行几何、Ideal/Reported 测量、误差、延迟/丢包与 FIFO
+  交付管线；
 - Truth、观测和诊断结果写入。
 
 ### 计划：任务、实验、Platform 运行生命周期与持久化
@@ -1171,13 +1281,16 @@ CesiumJS 数据不是科学主存储。前端不得反向修改已完成运行�
 - Platform `RunRequest`/`RunManifest`、`RunRecord`、`RunAttempt`、
   `RunOutcome` 和 `ResultBundle`；
 - SQLite repository、本地 artifact store 和 Parquet 表模式；
-- 运行状态机、保留策略和可重复运行编排。
+- 运行状态机、Sim 默认 TRANSIENT/显式 RETAINED 保留策略和可重复运行编排；
+- Algorithm Gateway、Batch/Streaming 生命周期、评价和只读成功交付 payload 授权。
 
 ### 计划：分析交互型三维工作台
 
 - CesiumJS 场景、时间控制、对象树和选择；
 - 轨迹、传感器、LOS、协方差和机动图层；
 - ECharts 同步分析和多算法结果对比。
+- 稳定英文机器值对应的中文标签、说明、保留提示和磁盘占用提示；中文文案不得进入
+  Manifest、科学哈希或稳定数据库枚举。
 
 ---
 
@@ -1197,6 +1310,10 @@ CesiumJS 数据不是科学主存储。前端不得反向修改已完成运行�
 10. 完成运行的输入和结果不可原地修改。
 11. Redis 不属于当前运行依赖。
 12. 前端不得承担权威坐标转换。
+13. ObservationEvent 每个 schedule occurrence 创建一次，不随积分、输出或渲染帧生成。
+14. 每个 ObservationEvent 恰好对应一个终态 ObservationDeliveryRecord。
+15. 算法只读取所选通道中成功交付的 payload，不读取失败记录或丢失内容。
+16. OutputRequirement 只控制 artifact 持久化，不控制科学流水线执行。
 
 ### 16.2 验收条件
 

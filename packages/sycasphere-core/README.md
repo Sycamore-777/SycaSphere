@@ -170,6 +170,46 @@ attempts use either `PeriodicObservationSchedule` or
 `ExplicitObservationSchedule`; measurement and error models are selected from
 the scheduled sensor, while data-link models remain run-level inputs.
 
+## Truth, observation, and delivery result contracts
+
+Core publishes immutable result shapes without executing them:
+
+- `TruthState` and `TruthManeuver` describe authoritative physical truth.
+- `IdealObservation` contains an error-free, algorithm-visible measurement.
+- `ReportedObservation` contains the post-error-model measurement supplied to
+  algorithms.
+- `ObservationDeliveryRecord` captures one terminal delivery outcome for one
+  observation Event.
+- `DeliverySummary` conserves the aggregate counts of all terminal outcomes.
+
+Truth, Ideal, and Reported remain strictly separate. The algorithm-visible
+observation models carry an `ObservationSubjectRef`, which discriminates an
+authorized known-object identity, a tracklet identity, or an unassociated
+detection. The internal Truth target identity used to form an
+`ObservationEvent` is not copied into either observation payload.
+
+`MeasurementUncertainty` is the effective covariance of the remaining
+reported-minus-ideal error after deterministic corrections. It can combine
+stochastic error with incompletely determined systematic error, but it never
+contains a realized noise sample or true bias. A missing uncertainty (`None`)
+means covariance is unavailable; an explicit zero covariance declares a
+known-zero residual covariance.
+
+An `ObservationEvent` is finalized once for each observation-schedule
+occurrence. Numerical integration steps, Truth output samples, and frontend
+render frames do not create extra Events. Each Event produces exactly one
+terminal `ObservationDeliveryRecord`, whether it is geometry-rejected, missed,
+quality-rejected, link-dropped, or delivered. The first delivery contract
+models delay and drop only; reordering, duplication, retransmission, and
+multiple retry attempts are outside its scope.
+
+`OutputRequirement.DELIVERY_SUMMARY` requests aggregate terminal counts.
+`OutputRequirement.DELIVERY_RECORDS` additionally requests persistent
+per-Event records and may require streamed artifact writing rather than
+retaining every record in memory. Output requirements control artifact
+persistence only: a future Engine must still run the selected Ideal or Reported
+scientific pipeline.
+
 ## Entity and sensor definitions
 
 The following examples validate definitions only; they do not propagate an
@@ -309,10 +349,11 @@ plugin implementation.
 
 ## Current implementation boundary
 
-Core currently implements the immutable input contracts shown above. It
-validates and freezes definitions, schedules, commands, run requests, and
-execution-manifest data, but it does not propagate or resolve a scientific
-backend.
+Core currently implements the immutable input and result contracts shown
+above. It validates and freezes definitions, schedules, commands, run
+requests, execution-manifest data, Truth results, observation payloads, and
+delivery facts, but it does not generate or execute them, propagate an orbit,
+or resolve a scientific backend.
 
 A planned Engine `prepare()` operation will resolve plugins and external data
 and create a `SimulationExecutionManifest`. The Manifest is immutable input

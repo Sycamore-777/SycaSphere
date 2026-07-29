@@ -6,8 +6,8 @@
 文件名    : test_execution.py
 创建者    : Sycamore
 创建日期  : 2026-07-26
-最后修改  : 2026-07-26
-版本号    : v1.2.0
+最后修改  : 2026-07-29
+版本号    : v1.4.0
 
 ■ 用途说明:
   验证自包含仿真运行请求及不可变执行清单的确定性、完整性和边界一致性约束。
@@ -19,13 +19,15 @@
 
 ■ 功能特性:
   ✓ 验证运行请求不依赖数据库引用、路径或运行状态
-  ✓ 验证传感器模型、链路模型、机动能力和输出采样的闭合引用
+  ✓ 验证混合观测通道、模型引用、机动能力和输出采样
   ✓ 验证执行清单哈希、排序、输入快照和篡改检测
 
 ■ 待办事项:
   - 无
 
 ■ 更新日志:
+  v1.4.0 (2026-07-29): 覆盖混合 IDEAL/REPORTED schedule 的 artifact 输出语义
+  v1.3.0 (2026-07-28): 增加逐事件交付记录输出开关回归测试
   v1.2.0 (2026-07-26): 增加请求信任边界及执行清单源输入等价性回归测试
   v1.1.0 (2026-07-26): 增加不可变仿真执行清单契约测试
   v1.0.0 (2026-07-26): 创建 SimulationRunRequest 契约测试
@@ -40,6 +42,11 @@ import math
 import pytest
 from pydantic import BaseModel, ValidationError
 from sycasphere.core._canonical import sha256_canonical_json
+from sycasphere.core._validation import (
+    require_builtin_float_sequence,
+    snapshot_model_collection,
+    snapshot_model_input,
+)
 from sycasphere.core.entities import (
     GroundStationDefinition,
     OtherSpaceObjectDefinition,
@@ -103,6 +110,15 @@ END_EPOCH = Epoch(value="2026-07-26T00:01:00Z", time_scale=TimeScale.UTC)
 SHA_A = "a" * 64
 SHA_B = "b" * 64
 SHA_C = "c" * 64
+
+
+# =============================👐Seperate👐=============================
+# Output-requirement compatibility
+# =============================👐Seperate👐=============================
+def test_delivery_records_is_a_distinct_output_requirement() -> None:
+    assert OutputRequirement.DELIVERY_RECORDS.value == "DELIVERY_RECORDS"
+    assert OutputRequirement.DELIVERY_RECORDS is not OutputRequirement.DELIVERY_SUMMARY
+    assert OutputRequirement.DELIVERY_SUMMARY.value == "DELIVERY_SUMMARY"
 
 
 # =============================👐Seperate👐=============================
@@ -331,6 +347,7 @@ def test_output_requirement_values_are_exact() -> None:
         "IDEAL_OBSERVATIONS",
         "REPORTED_OBSERVATIONS",
         "DELIVERY_SUMMARY",
+        "DELIVERY_RECORDS",
         "COMMAND_TRACE",
         "DIAGNOSTICS",
     }
@@ -481,14 +498,30 @@ def test_request_is_frozen_and_rejects_infrastructure_or_ui_fields(field_name: s
 # =============================👐Seperate👐=============================
 # Schedule and model cross-reference validation
 # =============================👐Seperate👐=============================
-def test_reported_output_requires_error_profile_on_every_schedule() -> None:
+def test_observation_outputs_do_not_override_mixed_schedule_channels() -> None:
     data = request_data()
-    schedule = make_request().observation_schedules[0]
-    data["observation_schedules"] = (schedule.model_copy(update={"error_profile_id": None}),)
-    data["output_requirements"] = ("TRUTH", "REPORTED_OBSERVATIONS")
+    reported_schedule = make_request().observation_schedules[0]
+    ideal_schedule = reported_schedule.model_copy(
+        update={
+            "schedule_id": "schedule-ideal",
+            "error_profile_id": None,
+        }
+    )
+    data["observation_schedules"] = (ideal_schedule, reported_schedule)
+    data["output_requirements"] = (
+        "TRUTH",
+        "IDEAL_OBSERVATIONS",
+        "REPORTED_OBSERVATIONS",
+    )
 
-    with pytest.raises(ValidationError, match="error_profile"):
-        SimulationRunRequest.model_validate(data)
+    request = SimulationRunRequest.model_validate(data)
+
+    assert request.observation_schedules[0].error_profile_id is None
+    assert request.observation_schedules[1].error_profile_id == "sycasphere.error.optical"
+    assert {
+        OutputRequirement.IDEAL_OBSERVATIONS,
+        OutputRequirement.REPORTED_OBSERVATIONS,
+    }.issubset(request.output_requirements)
 
 
 def test_request_resolves_every_schedule_reference() -> None:
@@ -1428,3 +1461,16 @@ def test_manifest_snapshots_mutable_aliases_in_copied_source_request() -> None:
         1.0,
         2.0,
     )
+
+
+def test_shared_boundary_helpers_snapshot_models_and_reject_numeric_coercion() -> None:
+    epoch = Epoch(value="2026-07-28T00:00:00Z", time_scale=TimeScale.UTC)
+
+    assert snapshot_model_input(epoch) == epoch.model_dump(mode="python")
+    assert snapshot_model_collection((epoch,)) == (epoch.model_dump(mode="python"),)
+    assert require_builtin_float_sequence((1.0, 2.0), "values") == (1.0, 2.0)
+
+    with pytest.raises(ValueError, match="built-in floats"):
+        require_builtin_float_sequence((1, 2.0), "values")
+    with pytest.raises(ValueError, match="list or tuple"):
+        require_builtin_float_sequence("1.0,2.0", "values")

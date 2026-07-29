@@ -6,8 +6,8 @@
 文件名    : test_public_api.py
 创建者    : Sycamore
 创建日期  : 2026-07-20
-最后修改  : 2026-07-26
-版本号    : v1.1.0
+最后修改  : 2026-07-28
+版本号    : v1.2.0
 
 ■ 用途说明:
   锁定 SycaSphere Core 的公开导入契约和 Pydantic 模式。
@@ -21,8 +21,10 @@
   ✓ 公开 API 变更必须经测试审查。
   ✓ 模式快照使用确定性 JSON 比较。
   ✓ 运行输入与执行清单公开契约受到审查。
+  ✓ Truth、Observation 与 Delivery 公开模式受到泄漏和判别器审查。
 
 ■ 更新日志:
+  v1.2.0 (2026-07-28): 覆盖 Truth、Observation 与 Delivery 公开契约。
   v1.1.0 (2026-07-26): 覆盖仿真输入和执行清单公开契约。
   v1.0.0 (2026-07-20): 新增公开 API 和模式快照测试。
 
@@ -42,10 +44,14 @@ from pydantic import BaseModel, TypeAdapter
 # Public Core contract tests
 # =============================👐Seperate👐=============================
 EXPECTED_PUBLIC_CONTRACTS = {
+    "AttitudeState",
     "CartesianState",
     "CentralBody",
     "CoordinateRepresentation",
+    "CustomMeasurementSchemaRef",
     "DerivedRandomStream",
+    "DeliveryOutcome",
+    "DeliverySummary",
     "EarthFixedFrameSpec",
     "EntityDefinition",
     "EntityType",
@@ -60,15 +66,26 @@ EXPECTED_PUBLIC_CONTRACTS = {
     "FrameKind",
     "FrameRef",
     "GeodeticLocation",
+    "GeometryStatus",
     "GroundStationDefinition",
+    "IdealObservation",
     "ImpulsiveManeuverSpec",
+    "KnownObjectSubjectRef",
     "ManeuverCapability",
     "ManeuverCommand",
     "ManeuverSpec",
+    "ManeuverTruthSource",
     "ManeuverType",
+    "MeasurementType",
+    "MeasurementUncertainty",
     "ModelRef",
+    "ObservationChannel",
+    "ObservationDeliveryRecord",
+    "ObservationEvent",
+    "ObservationMeasurement",
     "ObservationSchedule",
     "ObservationScheduleKind",
+    "ObservationSubjectRef",
     "OtherSpaceObjectDefinition",
     "OutputProduct",
     "OutputRequirement",
@@ -82,6 +99,7 @@ EXPECTED_PUBLIC_CONTRACTS = {
     "PreparedManeuverSource",
     "PreparedTimeline",
     "ReferenceEllipsoid",
+    "ReportedObservation",
     "ResolvedPluginRecord",
     "ResourceRequirements",
     "RigidTransform",
@@ -97,7 +115,12 @@ EXPECTED_PUBLIC_CONTRACTS = {
     "SimulationTimeRange",
     "SpaceObjectPhysicalProperties",
     "SpacecraftDefinition",
+    "StreamingObservationEnvelope",
     "TimeScale",
+    "TrackletSubjectRef",
+    "TruthManeuver",
+    "TruthState",
+    "UnassociatedSubjectRef",
 }
 
 
@@ -154,11 +177,27 @@ def _public_model_schemas() -> dict[str, dict[str, Any]]:
         core.PreparedManeuverEntry,
         core.PreparedTimeline,
         core.SimulationExecutionManifest,
+        core.AttitudeState,
+        core.TruthState,
+        core.TruthManeuver,
+        core.KnownObjectSubjectRef,
+        core.TrackletSubjectRef,
+        core.UnassociatedSubjectRef,
+        core.CustomMeasurementSchemaRef,
+        core.ObservationMeasurement,
+        core.MeasurementUncertainty,
+        core.ObservationEvent,
+        core.IdealObservation,
+        core.ReportedObservation,
+        core.ObservationDeliveryRecord,
+        core.DeliverySummary,
+        core.StreamingObservationEnvelope,
     )
     schemas = {model.__name__: model.model_json_schema() for model in models}
     schemas["EntityDefinition"] = TypeAdapter(core.EntityDefinition).json_schema()
     schemas["ManeuverSpec"] = TypeAdapter(core.ManeuverSpec).json_schema()
     schemas["ObservationSchedule"] = TypeAdapter(core.ObservationSchedule).json_schema()
+    schemas["ObservationSubjectRef"] = TypeAdapter(core.ObservationSubjectRef).json_schema()
     return schemas
 
 
@@ -190,6 +229,29 @@ def test_discriminated_public_schemas_expose_discriminators() -> None:
 
     assert schemas["ManeuverSpec"]["discriminator"]["propertyName"] == "maneuver_type"
     assert schemas["ObservationSchedule"]["discriminator"]["propertyName"] == "schedule_type"
+    assert schemas["ObservationSubjectRef"]["discriminator"]["propertyName"] == "kind"
+    assert (
+        schemas["StreamingObservationEnvelope"]["properties"]["observation"]["discriminator"][
+            "propertyName"
+        ]
+        == "channel"
+    )
+
+
+def test_algorithm_visible_schemas_exclude_truth_and_realized_errors() -> None:
+    """Ideal/Reported schemas must not expose Truth identity or realized error samples."""
+    schemas = _public_model_schemas()
+    forbidden_properties = {
+        "truth_target_entity_id",
+        "truth_state",
+        "actual_error",
+        "noise_sample",
+        "true_bias",
+        "truth_residual",
+    }
+
+    assert forbidden_properties.isdisjoint(schemas["IdealObservation"]["properties"])
+    assert forbidden_properties.isdisjoint(schemas["ReportedObservation"]["properties"])
 
 
 def test_execution_manifest_excludes_runtime_lifecycle_fields() -> None:
