@@ -6,8 +6,8 @@
 文件名    : test_package.py
 创建者    : Sycamore
 创建日期  : 2026-07-20
-最后修改  : 2026-07-28
-版本号    : v1.6.0
+最后修改  : 2026-07-30
+版本号    : v1.7.0
 
 ■ 用途说明:
   验证 Core 分发包版本、许可证以及公开文档中的领域契约一致性。
@@ -36,6 +36,7 @@
   ✓ 锁定几何、Event、测量、误差与链路的权威图示顺序。
 
 ■ 更新日志:
+  v1.7.0 (2026-07-30): 同步 Engine v0.1 已实现与后续计划状态。
   v1.6.0 (2026-07-28): 增加 Core 与 Runtime 图示阶段顺序回归测试。
   v1.5.0 (2026-07-28): 增加文档专属交付门控、FIFO 和 SchemaVersion 回归测试。
   v1.4.0 (2026-07-28): 新增权威架构文档状态与交付语义一致性测试。
@@ -99,7 +100,15 @@ IMPLEMENTED_CORE_CONTRACT_STATUS = (
     "`ObservationDeliveryRecord`、`DeliverySummary` 和"
     " `StreamingObservationEnvelope`。"
 )
-PLANNED_RUNTIME_STATUS = "Engine 执行、Orekit 适配、Sim 保留策略、存储、算法和前端实现仍为计划。"
+IMPLEMENTED_ENGINE_STATUS = (
+    "Engine v0.1 已实现同步 `prepare()`/`run()`、显式 `PluginRegistry`、"
+    "非科学 `FakeBackend` 和输出 sinks。"
+)
+PLANNED_AFTER_ENGINE_STATUS = (
+    "Observation 流水线、交互式 Session、Orekit、Sim 保留、Platform 生命周期和前端仍为计划。"
+)
+ENGINE_RESULT_BOUNDARY_STATUS = "`SimulationExecutionResult` 不是 `RunOutcome`。"
+FAKE_MASS_STATUS = "`FakeBackend` 质量保持不变，因为当前脉冲输入没有消耗量。"
 DELIVERY_PIPELINE_PHRASES = (
     "先分配 `event_id`，完成几何检查后一次性创建不可变 Event，不创建可回填的半成品。",
     "Event 只跟随 ObservationSchedule 触发。积分步、Truth 输出采样和"
@@ -224,8 +233,20 @@ def test_core_readme_does_not_exclude_run_requests() -> None:
 
 @pytest.mark.parametrize(
     "expected_phrase",
-    (IMPLEMENTED_CORE_CONTRACT_STATUS, PLANNED_RUNTIME_STATUS),
-    ids=("implemented-core-contracts", "planned-runtime"),
+    (
+        IMPLEMENTED_CORE_CONTRACT_STATUS,
+        IMPLEMENTED_ENGINE_STATUS,
+        PLANNED_AFTER_ENGINE_STATUS,
+        ENGINE_RESULT_BOUNDARY_STATUS,
+        FAKE_MASS_STATUS,
+    ),
+    ids=(
+        "implemented-core-contracts",
+        "implemented-engine-runtime",
+        "planned-after-engine",
+        "engine-result-not-run-outcome",
+        "fake-mass-unchanged",
+    ),
 )
 @pytest.mark.parametrize(
     "document_path",

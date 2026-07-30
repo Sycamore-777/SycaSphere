@@ -11,19 +11,21 @@ objects, `SimulationExecutionManifest` provenance, `TruthState` and
 `ReportedObservation` payloads, per-event `ObservationDeliveryRecord` facts,
 and aggregate `DeliverySummary` results.
 
-The distribution is named `sycasphere-core`, while Python code imports it as
-`sycasphere.core`. See the [Core package guide](packages/sycasphere-core/README.md)
-for installation, a minimal executable run-request example, compatibility
-rules, and the current implementation boundary.
+The distributions are named `sycasphere-core` and `sycasphere-engine`, while
+Python code imports them as `sycasphere.core` and `sycasphere.engine`. See the
+[Core package guide](packages/sycasphere-core/README.md) for domain contracts
+and the [Engine package guide](packages/sycasphere-engine/README.md) for the
+bounded executable FakeBackend example and batch runtime API.
 
-Core validates and freezes these contracts but does not propagate. A planned
-Engine `prepare()` operation will resolve plugins and external scientific data
-and create a `SimulationExecutionManifest`. That Manifest is immutable input
-provenance, not run status; mutable state belongs to future `RunRecord` and
-`RunAttempt` contracts, while terminal data belongs to a future `RunOutcome`.
-Engine sessions, observation and result generation, retention, persistence,
-and Orekit execution remain separate planned packages or implementation
-batches.
+Core validates and freezes scientific contracts. Engine v0.1 now implements
+synchronous `prepare()`/`run()`, an explicit immutable `PluginRegistry`,
+deterministic non-scientific `FakeBackend`, cooperative cancellation, and
+streaming output sinks for Truth, attitude, and J2000 impulsive maneuvers.
+`SimulationExecutionManifest` remains immutable input provenance, not run
+status, and the lightweight `SimulationExecutionResult` is not the future
+Platform `RunOutcome`. Observation generation and delivery, interactive
+Session control, Orekit execution, Sim retention and persistence, Platform
+run lifecycle and algorithms, and the frontend remain planned.
 
 ## Truth, observation, and delivery contracts
 
@@ -66,6 +68,7 @@ Development and release builds use the locked root environment:
 ```bash
 uv sync --locked
 uv build --offline --no-build-isolation --package sycasphere-core --out-dir .build/core
+uv build --offline --no-build-isolation --package sycasphere-engine --out-dir .build/engine
 ```
 
 This uses the tracked Hatchling version without fetching an isolated backend.

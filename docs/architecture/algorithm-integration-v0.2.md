@@ -42,10 +42,13 @@ SycaSphere 的核心价值不是锁定一套内置算法，而是让用户自己
 
 当前优先实现本地 Python 插件。容器和远程服务保留协议边界，但不要求在第一开发阶段完成。MATLAB/C++ 专用适配器不进入当前核心。
 
-截至 2026-07-28，仓库实际交付边界如下：
+截至 2026-07-30，仓库实际交付边界如下：
 
 - Core 已实现 `AttitudeState`、`TruthState`、`TruthManeuver`、`ObservationEvent`、`ObservationMeasurement`、`IdealObservation`、`ReportedObservation`、`MeasurementUncertainty`、`ObservationDeliveryRecord`、`DeliverySummary` 和 `StreamingObservationEnvelope`。
-- Engine 执行、Orekit 适配、Sim 保留策略、存储、算法和前端实现仍为计划。
+- Engine v0.1 已实现同步 `prepare()`/`run()`、显式 `PluginRegistry`、非科学 `FakeBackend` 和输出 sinks。
+- Observation 流水线、交互式 Session、Orekit、Sim 保留、Platform 生命周期和前端仍为计划。
+- `SimulationExecutionResult` 不是 `RunOutcome`。
+- `FakeBackend` 质量保持不变，因为当前脉冲输入没有消耗量。
 - 先分配 `event_id`，完成几何检查后一次性创建不可变 Event，不创建可回填的半成品。
 - Event 只跟随 ObservationSchedule 触发。积分步、Truth 输出采样和前端渲染帧均不得隐式产生 Event。
 - 每个 ObservationSchedule 的交付通道由 `error_profile_id` 唯一决定： `error_profile_id is None` 选择 IDEAL；`error_profile_id` 存在选择 REPORTED。
@@ -62,9 +65,10 @@ SycaSphere 的核心价值不是锁定一套内置算法，而是让用户自己
 - 首版链路只模拟延迟和丢包，不模拟乱序、重复、重传或多次交付尝试。
 - Engine 后续保证每个算法输入流 FIFO；链路延迟不改变测量顺序。
 
-上列结果类型及其不可变、算法安全 Schema 已在 Core 交付；它们的实际生成、交付、
-持久化和消费尚未实现。本文描述的 Algorithm Gateway、Batch/Streaming 生命周期、
-评价、Platform 运行记录和持久化仍为计划接口，不表示已有可执行运行时。
+上列结果类型及其不可变、算法安全 Schema 已在 Core 交付；Engine v0.1 已生成
+Truth、姿态和脉冲机动结果，但 Observation 的生成、交付、持久化和消费尚未实现。
+本文描述的 Algorithm Gateway、Batch/Streaming 算法生命周期、评价、Platform 运行
+记录和持久化仍为计划接口。
 
 ---
 
@@ -105,15 +109,16 @@ flowchart TB
 - 向算法传递 Orekit、JPype 或 Java 对象；
 - 接受无法评价和展示的私有结果替代标准结果。
 
-计划中的 Engine 在算法网关之前接收自包含的 `SimulationRunRequest`，其中嵌入完整
+Engine v0.1 在算法网关之前接收自包含的 `SimulationRunRequest`，其中嵌入完整
 `SimulationDefinition`，并由 `prepare()` 生成不可变
 `SimulationExecutionManifest`。首版请求的 `command_timeline` 只包含
 `ManeuverCommand`，观测计划只使用 `PERIODIC` 和 `EXPLICIT` 两种判别类型；测量与
 误差模型从传感器定义选择，不在请求顶层重复，只有数据链路模型保留为运行级
 `link_models`。首版所有空间对象的初始状态时刻必须与
 `synchronization_epoch` 完全相等；未来可兼容升级为允许每个对象从不晚于同步时刻的
-状态分别预推进，且不改变首版数据含义。这些 Core 契约已经实现，Engine 准备和后续
-算法交付尚未实现。Core 同时已经实现 Truth/Observation/Delivery 结果数据形状；
+状态分别预推进，且不改变首版数据含义。这些 Core 契约和 Engine v0.1 的批量 Truth
+准备/执行已经实现，后续 Observation 与算法交付尚未实现。Core 同时已经实现
+Truth/Observation/Delivery 结果数据形状；
 Algorithm Gateway 未来只能消费被 Engine 标记为成功交付的所选 Ideal 或 Reported
 payload，不得从交付失败记录恢复或伪造观测。
 
@@ -916,10 +921,11 @@ Platform `RunManifest` 即使后续保留也只是不可变输入 provenance，�
 
 ## 17. 开发阶段
 
-以下各阶段均为计划；当前仓库已交付 Core 的定义、机动、计划、
+当前仓库已交付 Core 的定义、机动、计划、
 `SimulationRunRequest`、`SimulationExecutionManifest` 以及
-Truth/Observation/Delivery 结果契约。Engine/session 尚未生成或交付这些结果，
-Algorithm Gateway、算法生命周期、评价、持久化和 Platform 生命周期也尚未实现。
+Truth/Observation/Delivery 结果契约。Engine v0.1 已实现同步准备和批量 Truth、姿态、
+脉冲机动执行；Observation、交互式 Session、Algorithm Gateway、算法生命周期、评价、
+持久化和 Platform 生命周期尚未实现。
 
 ### 计划：算法注册与离线接口阶段
 

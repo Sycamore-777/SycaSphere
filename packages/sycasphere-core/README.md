@@ -352,13 +352,15 @@ plugin implementation.
 Core currently implements the immutable input and result contracts shown
 above. It validates and freezes definitions, schedules, commands, run
 requests, execution-manifest data, Truth results, observation payloads, and
-delivery facts, but it does not generate or execute them, propagate an orbit,
-or resolve a scientific backend.
+delivery facts, but Core itself does not execute or resolve them.
 
-A planned Engine `prepare()` operation will resolve plugins and external data
-and create a `SimulationExecutionManifest`. The Manifest is immutable input
-provenance, not run status. Mutable execution state belongs to future
-`RunRecord` and `RunAttempt` contracts, while terminal status, errors, and
-output hashes belong to a future `RunOutcome`. Engine sessions, observation
-and result generation, retention, persistence, and Orekit execution remain
-separate planned packages or implementation batches.
+The separate Engine v0.1 package now resolves an explicit backend registry,
+implements synchronous `prepare()`/`run()`, and streams Truth, attitude, and
+J2000 impulsive-maneuver outputs through deterministic FakeBackend and bounded
+sinks. The resulting `SimulationExecutionManifest` is immutable input
+provenance, not run status, and `SimulationExecutionResult` is not
+`RunOutcome`. Observation generation and delivery, interactive Session
+control, Orekit execution, Sim retention and persistence, Platform lifecycle
+and algorithms, and the frontend remain planned. See the
+[Engine package guide](../sycasphere-engine/README.md) for its exact public
+boundary and executable example.

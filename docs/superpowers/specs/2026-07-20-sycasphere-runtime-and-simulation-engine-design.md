@@ -13,10 +13,13 @@
 
 在本文与 v0.2 基线冲突之处，后续必须有意修订 v0.2 文档和 `AGENTS.md`，不得在代码中静默选择。完成整合前，本文作为已批准的设计增量。
 
-截至 2026-07-28，仓库实际交付边界如下：
+截至 2026-07-30，仓库实际交付边界如下：
 
 - Core 已实现 `AttitudeState`、`TruthState`、`TruthManeuver`、`ObservationEvent`、`ObservationMeasurement`、`IdealObservation`、`ReportedObservation`、`MeasurementUncertainty`、`ObservationDeliveryRecord`、`DeliverySummary` 和 `StreamingObservationEnvelope`。
-- Engine 执行、Orekit 适配、Sim 保留策略、存储、算法和前端实现仍为计划。
+- Engine v0.1 已实现同步 `prepare()`/`run()`、显式 `PluginRegistry`、非科学 `FakeBackend` 和输出 sinks。
+- Observation 流水线、交互式 Session、Orekit、Sim 保留、Platform 生命周期和前端仍为计划。
+- `SimulationExecutionResult` 不是 `RunOutcome`。
+- `FakeBackend` 质量保持不变，因为当前脉冲输入没有消耗量。
 - 先分配 `event_id`，完成几何检查后一次性创建不可变 Event，不创建可回填的半成品。
 - Event 只跟随 ObservationSchedule 触发。积分步、Truth 输出采样和前端渲染帧均不得隐式产生 Event。
 - 每个 ObservationSchedule 的交付通道由 `error_profile_id` 唯一决定： `error_profile_id is None` 选择 IDEAL；`error_profile_id` 存在选择 REPORTED。
@@ -33,9 +36,9 @@
 - 首版链路只模拟延迟和丢包，不模拟乱序、重复、重传或多次交付尝试。
 - Engine 后续保证每个算法输入流 FIFO；链路延迟不改变测量顺序。
 
-上列结果类型及其不可变 Schema 已在 Core 交付；Engine 尚未生成、交付或持久化这些
-对象。本文的 Engine `prepare()`/执行/会话、Orekit 适配以及 Sim/Platform 运行生命
-周期和持久化均为后续计划，以下 API 不表示已经存在运行时实现。
+上列结果类型及其不可变 Schema 已在 Core 交付；Engine v0.1 已生成并通过 sink 交付
+Truth、姿态和脉冲机动对象，但不持久化这些对象。Observation、交互式 Session、
+Orekit 适配以及 Sim/Platform 运行生命周期和持久化均为后续计划。
 
 ## 2. 核心设计决定
 
@@ -86,7 +89,7 @@ Core 的运行时依赖仍仅为 Pydantic 与 NumPy。根开发锁图显式包�
 
 ### 3.2 sycasphere-engine
 
-计划实现。保存后端中立的仿真内核：仿真准备、事件调度、时间推进、观测编排、误差与链路编排、交互会话和输出端口。它依赖 Core，但不得导入 Orekit。
+已实现 v0.1 后端中立批运行内核：同步准备、惰性时间调度、Truth/姿态/J2000 脉冲机动执行、取消和输出端口。观测编排、误差与链路编排、交互会话仍为计划。它依赖 Core，但不得导入 Orekit。
 
 ### 3.3 sycasphere-orekit
 
@@ -121,8 +124,8 @@ Engine 验收。
 
 ```text
 SimulationRunRequest                 Core 契约已实现
-    ↓ Engine.prepare()，计划实现
-SimulationExecutionManifest         Core 契约已实现、Engine 生成计划实现
+    ↓ Engine.prepare()，v0.1 已实现
+SimulationExecutionManifest         Core 契约与 Engine 生成均已实现
     ↓ 可选上层 provenance
 Platform RunManifest                计划实现，不得与 Engine Manifest 混用
     ↓ 创建操作记录
@@ -147,9 +150,9 @@ Platform 后续可以另设 `Platform RunRequest` 表示用户提交的 Experime
 
 ### 5.2 SimulationExecutionManifest 与 Platform RunManifest
 
-计划中的 Engine `prepare()` 生成 `SimulationExecutionManifest`，记录完整源请求、
+Engine v0.1 的 `prepare()` 生成 `SimulationExecutionManifest`，记录完整源请求、
 解析后的精确插件、实际外部数据、稳定派生随机流、紧凑时间线、事件顺序、预期输出和
-内容哈希。该 Core Manifest 数据契约已经实现；Engine 生成逻辑尚未实现。
+内容哈希。Core Manifest 数据契约与 Engine 生成逻辑均已实现。
 
 Platform 后续若保留自己的 `RunManifest`，必须明确区分为 Platform provenance：
 引用或嵌入 `SimulationExecutionManifest` 哈希，再增加 Mission、Experiment、算法和
@@ -331,14 +334,14 @@ Core 首版 `CartesianState` 只包含 `epoch`、`frame`、`position_m` 和 `vel
 保存机动后状态、使用机动后状态尝试观测、最后生成常规输出采样。因此同刻观测始终是
 post-maneuver observation，不提供机动前观测开关。
 
-计划中的 Engine `prepare()` 解析该请求并生成不可变的
+Engine v0.1 的 `prepare()` 解析该请求并生成不可变的
 `SimulationExecutionManifest`。Platform 后续若保留 `RunManifest`，只引用或嵌入该
 Manifest 哈希，再增加 Mission、Experiment、算法和评价 provenance；可变状态进入
 `RunRecord`/`RunAttempt`，终态时间、状态、错误和输出哈希进入 `RunOutcome`。
 
 ## 10. 交互式仿真 API
 
-以下 Engine API 为后续计划，当前只存在其使用的 Core 请求和 Manifest 数据契约：
+Engine v0.1 已实现前两个同步批运行 API；交互式 Session 和恢复仍为后续计划：
 
 ```text
 prepare(request) -> SimulationExecutionManifest
@@ -392,7 +395,7 @@ Java 异常不得泄漏为公共类型；Orekit adapter 转换为结构化错误
   StreamingEnvelope 的公开模式、状态矩阵、深度不可变与授权隔离；
 - `DELIVERY_RECORDS` 输出要求。
 
-### Engine（计划验收）
+### Engine（v0.1 批运行已验收；Session/Observation 项仍为计划）
 
 - 使用假后端验证 prepare/run/session/restore 生命周期；
 - 固定种子和稳定派生随机流；

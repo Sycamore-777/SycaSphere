@@ -52,10 +52,13 @@ SycaSphere 当前定位为：
 
 这些能力可以在核心模型稳定后扩展，但不得提前污染当前领域边界。
 
-截至 2026-07-28，仓库实际交付边界如下：
+截至 2026-07-30，仓库实际交付边界如下：
 
 - Core 已实现 `AttitudeState`、`TruthState`、`TruthManeuver`、`ObservationEvent`、`ObservationMeasurement`、`IdealObservation`、`ReportedObservation`、`MeasurementUncertainty`、`ObservationDeliveryRecord`、`DeliverySummary` 和 `StreamingObservationEnvelope`。
-- Engine 执行、Orekit 适配、Sim 保留策略、存储、算法和前端实现仍为计划。
+- Engine v0.1 已实现同步 `prepare()`/`run()`、显式 `PluginRegistry`、非科学 `FakeBackend` 和输出 sinks。
+- Observation 流水线、交互式 Session、Orekit、Sim 保留、Platform 生命周期和前端仍为计划。
+- `SimulationExecutionResult` 不是 `RunOutcome`。
+- `FakeBackend` 质量保持不变，因为当前脉冲输入没有消耗量。
 - 先分配 `event_id`，完成几何检查后一次性创建不可变 Event，不创建可回填的半成品。
 - Event 只跟随 ObservationSchedule 触发。积分步、Truth 输出采样和前端渲染帧均不得隐式产生 Event。
 - 每个 ObservationSchedule 的交付通道由 `error_profile_id` 唯一决定： `error_profile_id is None` 选择 IDEAL；`error_profile_id` 存在选择 REPORTED。
@@ -72,10 +75,10 @@ SycaSphere 当前定位为：
 - 首版链路只模拟延迟和丢包，不模拟乱序、重复、重传或多次交付尝试。
 - Engine 后续保证每个算法输入流 FIFO；链路延迟不改变测量顺序。
 
-上列 Core 类型只定义不可变、可序列化、后端中立的领域契约；Engine 的
-`prepare()`/执行/会话、观测与结果生成，Orekit 科学实现，以及 Platform 的任务、
-实验、运行生命周期和持久化均未随本批次实现。不得把下文目标架构理解为已经存在的
-可执行运行时。
+上列 Core 类型只定义不可变、可序列化、后端中立的领域契约。Engine v0.1 已能通过
+显式注册的科学后端准备并同步执行批量 Truth、姿态和 J2000 脉冲机动；它尚未生成
+Observation 或提供交互式 Session。Orekit 科学实现，以及 Platform 的任务、实验、
+运行生命周期和持久化仍未实现。不得把下文目标架构理解为已全部交付。
 
 ---
 
@@ -156,10 +159,10 @@ flowchart TB
 
 ### 2.5 运行对象与 ResultBundle
 
-Core 已实现的 `SimulationRunRequest` 保存独立 Engine 的完整科学输入；计划中的
-Engine `prepare()` 解析它并生成 `SimulationExecutionManifest`。该 Manifest 是只描述
-解析后科学输入的不可变 provenance，记录精确配置、插件与数据版本、输入校验值和
-预期输出，不是运行状态对象。
+Core 已实现的 `SimulationRunRequest` 保存独立 Engine 的完整科学输入；Engine v0.1
+的 `prepare()` 解析它并生成 `SimulationExecutionManifest`。该 Manifest 是只描述解析后
+科学输入的不可变 provenance，记录精确配置、插件与数据版本、输入校验值和预期输出，
+不是运行状态对象。
 
 Platform 后续若保留自己的 `RunRequest`/`RunManifest` 概念，必须使用
 `Platform RunManifest` 等清晰限定名称，并引用或嵌入
@@ -1012,7 +1015,7 @@ ObservationSchedule 的 `error_profile_id` 唯一决定 IDEAL 或 REPORTED 算�
 状态、使用机动后状态尝试观测、最后生成该时刻的常规采样。因此同刻观测是
 post-maneuver observation，不提供可切换的机动前观测解释。
 
-计划中的 Engine `prepare()` 成功后生成不可变
+Engine v0.1 的 `prepare()` 成功后生成不可变
 `SimulationExecutionManifest`，记录：
 
 - 完整源请求及其哈希；
@@ -1265,14 +1268,18 @@ CesiumJS 数据不是科学主存储。前端不得反向修改已完成运行�
 - `DELIVERY_RECORDS` 输出要求以及 Ideal/Reported 判别联合的公开 Schema；
 - 公开 API、JSON Schema 快照、单元测试和独立 Core 分发。
 
-### 计划：Engine 与 Orekit 执行
+### 当前已实现：Engine v0.1 批量 Truth 执行
 
-- Engine `prepare()`、执行、交互会话和恢复；
-- JVM 生命周期和 J2000 后端映射；
-- 空间对象传播以及地面站和天基平台状态；
-- 使用已实现 Core 契约执行几何、Ideal/Reported 测量、误差、延迟/丢包与 FIFO
-  交付管线；
-- Truth、观测和诊断结果写入。
+- 同步 Engine `prepare()`/`run()`、显式不可变插件注册表和结构化错误；
+- 惰性批量 Truth/姿态采样、J2000 脉冲机动、取消和输出 sink 生命周期；
+- 确定性的非科学 `FakeBackend`，用于测试、示例和第三方后端兼容性开发。
+
+### 计划：Observation、交互式 Session 与 Orekit
+
+- 几何、Ideal/Reported 测量、误差、延迟/丢包与 FIFO 交付管线；
+- 交互式 Session、恢复和运行时命令日志；
+- JVM 生命周期、J2000 后端映射和高保真空间对象传播；
+- Observation 和诊断结果写入。
 
 ### 计划：任务、实验、Platform 运行生命周期与持久化
 
