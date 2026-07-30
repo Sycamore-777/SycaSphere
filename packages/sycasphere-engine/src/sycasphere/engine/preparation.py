@@ -7,18 +7,20 @@
 创建者    : Sycamore
 创建日期  : 2026-07-31
 最后修改  : 2026-07-31
-版本号    : v1.0.0
+版本号    : v1.1.0
 
 ■ 用途说明:
   将完整仿真请求准备为不含运行状态和后端对象的不可变执行清单。
 
 ■ 主要函数功能:
   - ManifestPreparer.prepare: 快照请求、校验范围并创建 Core 执行清单
+  - _validate_consumed_epochs: 通过已解析后端适配器校验全部消费时刻
   - _prepare_maneuvers: 使用已解析后端时间适配器稳定合并机动来源
 
 ■ 功能特性:
   ✓ 在公共边界重新验证完整请求
   ✓ 精确解析后端并锁定配置与外部数据 provenance
+  ✓ 通过同一后端时间适配器校验和排序全部运行消费时刻
   ✓ 保持同刻 PLANNED、COMMAND 和源元组位置的稳定顺序
   ✓ 准备期不创建科学后端 runtime
 
@@ -26,6 +28,7 @@
   - 无
 
 ■ 更新日志:
+  v1.1.0 (2026-07-31): 校验全部运行消费 Epoch 后再构造时间线
   v1.0.0 (2026-07-31): 创建 Manifest 准备服务
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -228,6 +231,36 @@ def _candidate_order(
     )
 
 
+def _consumed_epochs(request: SimulationRunRequest) -> tuple[Epoch, ...]:
+    """Enumerate every run-consumed Epoch in deterministic request-field order."""
+    epochs = [
+        request.simulation_definition.synchronization_epoch,
+        request.time_range.start,
+        request.time_range.end,
+    ]
+    epochs.extend(
+        entity.initial_state.epoch
+        for entity in request.simulation_definition.entities
+        if isinstance(
+            entity,
+            (SpacecraftDefinition, OtherSpaceObjectDefinition),
+        )
+    )
+    epochs.extend(maneuver.epoch for maneuver in request.simulation_definition.planned_maneuvers)
+    epochs.extend(command.epoch for command in request.command_timeline)
+    return tuple(epochs)
+
+
+def _validate_consumed_epochs(
+    request: SimulationRunRequest,
+    time_adapter: PreparationTimeAdapter,
+) -> None:
+    """Parse and validate every consumed Epoch against one fixed synchronization anchor."""
+    anchor = request.simulation_definition.synchronization_epoch
+    for epoch in _consumed_epochs(request):
+        time_adapter.compare(anchor, epoch)
+
+
 def _prepare_maneuvers(
     request: SimulationRunRequest,
     time_adapter: PreparationTimeAdapter,
@@ -309,6 +342,10 @@ class ManifestPreparer:
             registration.configuration_validator.validate(validated_request)
 
             ## -------------- step: lock ordered timeline and resolved provenance ---------
+            _validate_consumed_epochs(
+                validated_request,
+                registration.time_adapter,
+            )
             prepared_maneuvers = _prepare_maneuvers(
                 validated_request,
                 registration.time_adapter,

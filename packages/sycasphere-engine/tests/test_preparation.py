@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-31
 最后修改  : 2026-07-31
-版本号    : v1.0.0
+版本号    : v1.1.0
 
 ■ 用途说明:
   验证 Engine 准备期的边界快照、v0.1 范围分类、插件解析和稳定时间线。
@@ -19,12 +19,14 @@
 ■ 功能特性:
   ✓ 使用真实 Core 请求与公开 FakeBackend 注册项
   ✓ 覆盖通用注册项的外部数据和可变输入快照
+  ✓ 证明全部准备期消费时刻均经过已解析后端时间适配器
   ✓ 保证 prepare 不创建 runtime
 
 ■ 待办事项:
   - 无
 
 ■ 更新日志:
+  v1.1.0 (2026-07-31): 增加消费时刻适配器验证和补充帧遍历分支
   v1.0.0 (2026-07-31): 创建 Manifest 准备期合同测试
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -59,6 +61,7 @@ from sycasphere.core import (
     ManeuverCapability,
     ManeuverCommand,
     ManeuverType,
+    OtherSpaceObjectDefinition,
     OutputProduct,
     OutputRequirement,
     OutputSampling,
@@ -184,6 +187,14 @@ def _generic_registration(
     )
 
 
+def _strict_recording_generic_registration() -> ScienceBackendRegistration:
+    """Return a generic registration with the real strict calendar adapter recorded."""
+    base = fake_backend_registration()
+    return _generic_registration(
+        time_adapter=RecordingTimeAdapter(base.time_adapter),
+    )
+
+
 def _recording_validator(
     registration: ScienceBackendRegistration,
 ) -> RecordingValidator:
@@ -295,6 +306,49 @@ def _with_non_j2000_state(request: SimulationRunRequest) -> SimulationRunRequest
     return _validated_request(request, simulation_definition=definition)
 
 
+def _other_space_object(
+    request: SimulationRunRequest,
+    *,
+    frame: FrameRef | None = None,
+) -> OtherSpaceObjectDefinition:
+    """Return one propagated non-spacecraft object using Fake-owned scientific models."""
+    spacecraft = request.simulation_definition.entities[0]
+    assert isinstance(spacecraft, SpacecraftDefinition)
+    selected_frame = spacecraft.initial_state.frame if frame is None else frame
+    return OtherSpaceObjectDefinition(
+        id="other-space-object-1",
+        name="Other Space Object",
+        revision=1,
+        schema_version=SCHEMA_VERSION,
+        initial_state=CartesianState(
+            epoch=spacecraft.initial_state.epoch,
+            frame=selected_frame,
+            position_m=(7_100_000.0, 0.0, 0.0),
+            velocity_mps=(0.0, 7_400.0, 0.0),
+        ),
+        physical_properties=spacecraft.physical_properties,
+        dynamics_model=spacecraft.dynamics_model,
+        attitude_model=spacecraft.attitude_model,
+    )
+
+
+def _with_non_j2000_other_state(
+    request: SimulationRunRequest,
+) -> SimulationRunRequest:
+    """Return a valid request whose other-space-object state is not J2000."""
+    spacecraft = request.simulation_definition.entities[0]
+    assert isinstance(spacecraft, SpacecraftDefinition)
+    definition = request.simulation_definition.model_copy(
+        update={
+            "entities": (
+                spacecraft,
+                _other_space_object(request, frame=_earth_fixed_frame()),
+            )
+        }
+    )
+    return _validated_request(request, simulation_definition=definition)
+
+
 def _with_non_j2000_maneuver(request: SimulationRunRequest) -> SimulationRunRequest:
     """Return a valid request whose impulse uses an unsupported public frame."""
     maneuver = PlannedTruthManeuver(
@@ -305,6 +359,17 @@ def _with_non_j2000_maneuver(request: SimulationRunRequest) -> SimulationRunRequ
     )
     definition = request.simulation_definition.model_copy(update={"planned_maneuvers": (maneuver,)})
     return _validated_request(request, simulation_definition=definition)
+
+
+def _with_non_j2000_command(request: SimulationRunRequest) -> SimulationRunRequest:
+    """Return a valid request whose command impulse uses an unsupported frame."""
+    command = ManeuverCommand(
+        command_id="earth-fixed-command",
+        spacecraft_id="spacecraft-1",
+        epoch=request.time_range.start,
+        maneuver=fake_impulse(frame=_earth_fixed_frame()),
+    )
+    return _validated_request(request, command_timeline=(command,))
 
 
 def _with_output(
@@ -595,7 +660,13 @@ def test_prepare_classifies_observation_and_link_inputs_as_unsupported_measureme
     ("mutator", "source_kind", "source_id"),
     [
         (_with_non_j2000_state, "initial_state", "spacecraft-1"),
+        (
+            _with_non_j2000_other_state,
+            "initial_state",
+            "other-space-object-1",
+        ),
         (_with_non_j2000_maneuver, "planned_maneuver", "earth-fixed-impulse"),
+        (_with_non_j2000_command, "command", "earth-fixed-command"),
     ],
 )
 def test_prepare_classifies_non_j2000_scientific_inputs_as_unsupported_frame(
@@ -726,6 +797,151 @@ def test_prepare_classifies_fake_time_incompatibilities(
     assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
     assert captured.value.detail.code == expected_code
     assert _recording_validator(recording_fake_registration).validate_calls == 1
+
+
+# =============================👐Seperate👐=============================
+# Registration-adapter validation of every consumed Epoch
+# =============================👐Seperate👐=============================
+
+
+@pytest.mark.parametrize(
+    ("end_epoch", "expected_code"),
+    [
+        (
+            Epoch(value="2026-07-30T00:00:10", time_scale=TimeScale.TAI),
+            "ENGINE_TIME_SCALE_MISMATCH",
+        ),
+        (
+            Epoch(value="2026-12-31T23:59:60Z", time_scale=TimeScale.UTC),
+            "ENGINE_TIME_LEAP_SECOND_UNSUPPORTED",
+        ),
+    ],
+)
+def test_prepare_validates_zero_maneuver_range_epochs_with_generic_adapter(
+    fake_request: SimulationRunRequest,
+    end_epoch: Epoch,
+    expected_code: str,
+) -> None:
+    """A no-op generic validator cannot bypass registration-adapter range parsing."""
+    registration = _strict_recording_generic_registration()
+    request = _validated_request(
+        fake_request,
+        backend=ScienceBackendBinding(ref=registration.manifest.ref),
+        time_range=fake_request.time_range.model_copy(update={"end": end_epoch}),
+    )
+    assert request.simulation_definition.planned_maneuvers == ()
+    assert request.command_timeline == ()
+
+    with pytest.raises(SimulationPreparationError) as captured:
+        ManifestPreparer(PluginRegistry((registration,))).prepare(request)
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == expected_code
+    assert _recording_validator(registration).validate_calls == 1
+    assert _recording_factory(registration).create_calls == 0
+
+
+def test_prepare_validates_one_maneuver_epoch_with_generic_adapter(
+    fake_request: SimulationRunRequest,
+) -> None:
+    """One candidate still has its Epoch parsed when sorting needs no comparison."""
+    registration = _strict_recording_generic_registration()
+    command = _command(
+        "mixed-scale-command",
+        Epoch(value="2026-07-30T00:00:05", time_scale=TimeScale.TAI),
+    )
+    request = _validated_request(
+        fake_request,
+        backend=ScienceBackendBinding(ref=registration.manifest.ref),
+        command_timeline=(command,),
+    )
+
+    with pytest.raises(SimulationPreparationError) as captured:
+        ManifestPreparer(PluginRegistry((registration,))).prepare(request)
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == "ENGINE_TIME_SCALE_MISMATCH"
+    assert _recording_validator(registration).validate_calls == 1
+    assert _recording_factory(registration).create_calls == 0
+
+
+def test_prepare_parses_synchronization_anchor_with_generic_adapter(
+    fake_request: SimulationRunRequest,
+) -> None:
+    """The fixed anchor is parsed even before it is compared with another Epoch."""
+    registration = _strict_recording_generic_registration()
+    synchronization_epoch = Epoch(
+        value="2026-07-30T00:00:60Z",
+        time_scale=TimeScale.UTC,
+    )
+    spacecraft = fake_request.simulation_definition.entities[0]
+    assert isinstance(spacecraft, SpacecraftDefinition)
+    initial_state = spacecraft.initial_state.model_copy(update={"epoch": synchronization_epoch})
+    definition = fake_request.simulation_definition.model_copy(
+        update={
+            "synchronization_epoch": synchronization_epoch,
+            "entities": (spacecraft.model_copy(update={"initial_state": initial_state}),),
+        }
+    )
+    request = _validated_request(
+        fake_request,
+        simulation_definition=definition,
+        time_range=SimulationTimeRange(
+            start=utc("2026-07-30T00:01:00Z"),
+            end=utc("2026-07-30T00:01:10Z"),
+        ),
+        backend=ScienceBackendBinding(ref=registration.manifest.ref),
+    )
+
+    with pytest.raises(SimulationPreparationError) as captured:
+        ManifestPreparer(PluginRegistry((registration,))).prepare(request)
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == "ENGINE_TIME_LEAP_SECOND_UNSUPPORTED"
+    assert _recording_validator(registration).validate_calls == 1
+    assert _recording_factory(registration).create_calls == 0
+
+
+def test_prepare_presents_every_consumed_epoch_to_registration_adapter(
+    fake_request: SimulationRunRequest,
+) -> None:
+    """The deterministic validation prefix covers ranges, both entity kinds, and sources."""
+    registration = _strict_recording_generic_registration()
+    spacecraft = fake_request.simulation_definition.entities[0]
+    assert isinstance(spacecraft, SpacecraftDefinition)
+    other = _other_space_object(fake_request)
+    planned = _planned("planned-consumed", utc("2026-07-30T00:00:02Z"))
+    command = _command("command-consumed", utc("2026-07-30T00:00:03Z"))
+    definition = fake_request.simulation_definition.model_copy(
+        update={
+            "entities": (spacecraft, other),
+            "planned_maneuvers": (planned,),
+        }
+    )
+    request = _validated_request(
+        fake_request,
+        simulation_definition=definition,
+        command_timeline=(command,),
+        backend=ScienceBackendBinding(ref=registration.manifest.ref),
+    )
+    anchor = request.simulation_definition.synchronization_epoch
+    expected_epochs = (
+        anchor,
+        request.time_range.start,
+        request.time_range.end,
+        spacecraft.initial_state.epoch,
+        other.initial_state.epoch,
+        planned.epoch,
+        command.epoch,
+    )
+    adapter = cast(RecordingTimeAdapter, registration.time_adapter)
+
+    ManifestPreparer(PluginRegistry((registration,))).prepare(request)
+
+    validation_prefix = tuple(adapter.compare_calls[: len(expected_epochs)])
+    assert validation_prefix == tuple((anchor, epoch) for epoch in expected_epochs)
+    assert _recording_validator(registration).validate_calls == 1
+    assert _recording_factory(registration).create_calls == 0
 
 
 # =============================👐Seperate👐=============================
