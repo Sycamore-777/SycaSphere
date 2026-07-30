@@ -67,6 +67,15 @@ def test_completed_result_has_counts_and_no_termination_detail() -> None:
     )
     assert result.termination_detail is None
 
+    with pytest.raises(ValidationError, match="COMPLETED"):
+        SimulationExecutionResult(
+            manifest_content_hash="a" * 64,
+            status=SimulationExecutionStatus.COMPLETED,
+            final_epoch=EPOCH,
+            output_summary=SimulationOutputSummary(),
+            termination_detail=CANCELLED,
+        )
+
 
 def test_cancelled_result_requires_cancelled_detail() -> None:
     result = SimulationExecutionResult(
@@ -84,6 +93,39 @@ def test_cancelled_result_requires_cancelled_detail() -> None:
                 **result.model_dump(mode="python"),
                 "termination_detail": None,
             }
+        )
+
+    with pytest.raises(ValidationError, match="CANCELLED"):
+        SimulationExecutionResult(
+            manifest_content_hash="a" * 64,
+            status=SimulationExecutionStatus.CANCELLED,
+            final_epoch=EPOCH,
+            output_summary=SimulationOutputSummary(),
+            termination_detail=CANCELLED.model_copy(
+                update={"category": ErrorCategory.INTERNAL_ERROR}
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("run_id", "run-001"),
+        ("attempt_id", "attempt-001"),
+        ("diagnostic_artifact_ref", "artifact://diagnostic-001"),
+    ],
+)
+def test_cancelled_result_rejects_platform_references(
+    field: str,
+    value: str,
+) -> None:
+    with pytest.raises(ValidationError, match=field):
+        SimulationExecutionResult(
+            manifest_content_hash="a" * 64,
+            status=SimulationExecutionStatus.CANCELLED,
+            final_epoch=EPOCH,
+            output_summary=SimulationOutputSummary(),
+            termination_detail=CANCELLED.model_copy(update={field: value}),
         )
 
 

@@ -98,4 +98,16 @@ class SimulationExecutionResult(BaseModel):
             raise ValueError("CANCELLED result requires termination_detail")
         if self.termination_detail.category is not ErrorCategory.CANCELLED:
             raise ValueError("CANCELLED result requires CANCELLED error category")
+        if any(
+            reference is not None
+            for reference in (
+                self.termination_detail.run_id,
+                self.termination_detail.attempt_id,
+                self.termination_detail.diagnostic_artifact_ref,
+            )
+        ):
+            raise ValueError(
+                "CANCELLED result termination_detail must not contain run_id, "
+                "attempt_id, or diagnostic_artifact_ref"
+            )
         return self

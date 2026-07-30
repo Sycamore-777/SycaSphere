@@ -199,6 +199,7 @@ def _public_model_schemas() -> dict[str, dict[str, Any]]:
         core.StreamingObservationEnvelope,
     )
     schemas = {model.__name__: model.model_json_schema() for model in models}
+    schemas["SimulationExecutionStatus"] = TypeAdapter(core.SimulationExecutionStatus).json_schema()
     schemas["EntityDefinition"] = TypeAdapter(core.EntityDefinition).json_schema()
     schemas["ManeuverSpec"] = TypeAdapter(core.ManeuverSpec).json_schema()
     schemas["ObservationSchedule"] = TypeAdapter(core.ObservationSchedule).json_schema()
@@ -226,6 +227,13 @@ def test_public_model_schemas_match_snapshot() -> None:
 
     assert json.loads(expected_text) == _public_model_schemas()
     assert expected_text == _serialized_public_model_schemas()
+
+
+def test_execution_status_enum_schema_is_snapshotted() -> None:
+    """The standalone terminal-status enum remains in the reviewed public schema set."""
+    schema = _public_model_schemas()["SimulationExecutionStatus"]
+
+    assert schema["enum"] == ["COMPLETED", "CANCELLED"]
 
 
 def test_discriminated_public_schemas_expose_discriminators() -> None:

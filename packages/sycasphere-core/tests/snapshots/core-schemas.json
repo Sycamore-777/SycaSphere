@@ -11469,6 +11469,15 @@
     "title": "SimulationExecutionResult",
     "type": "object"
   },
+  "SimulationExecutionStatus": {
+    "description": "Terminal outcome of a simulation execution with no execution failure result.",
+    "enum": [
+      "COMPLETED",
+      "CANCELLED"
+    ],
+    "title": "SimulationExecutionStatus",
+    "type": "string"
+  },
   "SimulationOutputSummary": {
     "$defs": {
       "StrictNonNegativeInt": {
