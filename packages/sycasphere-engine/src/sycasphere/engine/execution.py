@@ -44,6 +44,8 @@ from sycasphere.core import (
     ErrorDetail,
     ManeuverTruthSource,
     OutputProduct,
+    PluginKind,
+    ResolvedPluginRecord,
     SimulationExecutionManifest,
     SimulationExecutionResult,
     SimulationExecutionStatus,
@@ -53,6 +55,7 @@ from sycasphere.core import (
 )
 from sycasphere.engine.backend import (
     PropagationOutcome,
+    ScienceBackendRegistration,
     ScienceBackendRuntime,
     SimulationOutputSink,
 )
@@ -108,11 +111,20 @@ class _OutputBuffers:
         if len(self.truth_maneuvers) == self.batch_size:
             self._flush_truth_maneuvers()
 
-    def flush_remaining(self) -> None:
-        """Flush nonempty residual channel batches in stable channel order."""
-        self._flush_truth_states()
-        self._flush_attitude_states()
-        self._flush_truth_maneuvers()
+    def flush_remaining(self, cancellation: CancellationProbe) -> bool:
+        """Flush residual channels in order, checking cancellation before each write."""
+        pending_flushes = (
+            (self.truth_states, self._flush_truth_states),
+            (self.attitude_states, self._flush_attitude_states),
+            (self.truth_maneuvers, self._flush_truth_maneuvers),
+        )
+        for records, flush in pending_flushes:
+            if not records:
+                continue
+            if cancellation.is_cancelled:
+                return False
+            flush()
+        return True
 
     def summary(self) -> SimulationOutputSummary:
         """Return counts recorded when outputs entered their typed buffers."""
@@ -216,6 +228,52 @@ def _validated_manifest(
         ) from None
 
 
+def _validate_backend_provenance(
+    manifest: SimulationExecutionManifest,
+    registration: ScienceBackendRegistration,
+) -> None:
+    """Require the resolved science-backend record to match source and registry binding."""
+    source_binding = manifest.source_request.backend
+    expected = ResolvedPluginRecord.create(
+        component_id="science-backend",
+        kind=PluginKind.SCIENCE_BACKEND,
+        ref=registration.manifest.ref,
+        configuration=source_binding.configuration,
+    )
+    actual = next(
+        (
+            record
+            for record in manifest.resolved_plugins
+            if record.component_id == "science-backend"
+        ),
+        None,
+    )
+    mismatch: str | None = None
+    if actual is None:
+        mismatch = "missing"
+    elif actual.ref != expected.ref:
+        mismatch = "ref"
+    elif actual.kind is not expected.kind:
+        mismatch = "kind"
+    elif actual.configuration_hash != expected.configuration_hash:
+        mismatch = "configuration"
+    if mismatch is None:
+        return
+    raise SimulationExecutionError(
+        make_error_detail(
+            category=ErrorCategory.PLUGIN_INCOMPATIBLE,
+            code="engine.execution.backend_provenance_mismatch",
+            message="Resolved science backend provenance does not match the source binding.",
+            component_ref=_COMPONENT_REF,
+            context={
+                "mismatch": mismatch,
+                "expected_backend": expected.model_dump(mode="json"),
+                "actual_backend": (None if actual is None else actual.model_dump(mode="json")),
+            },
+        )
+    )
+
+
 # =============================👐Seperate👐=============================
 # Stateless synchronous batch runner
 # =============================👐Seperate👐=============================
@@ -240,17 +298,22 @@ class BatchRunner:
         cancellation: CancellationProbe,
     ) -> SimulationExecutionResult:
         """Run one manifest to completion, normal cancellation, or structured failure."""
-        validated = _validated_manifest(manifest)
-        empty_summary = SimulationOutputSummary()
-        synchronization_epoch = validated.source_request.simulation_definition.synchronization_epoch
-        if cancellation.is_cancelled:
-            return _result(
-                validated,
-                status=SimulationExecutionStatus.CANCELLED,
-                final_epoch=synchronization_epoch,
-                summary=empty_summary,
-                detail=_cancelled_detail(),
+        try:
+            validated = _validated_manifest(manifest)
+            empty_summary = SimulationOutputSummary()
+            synchronization_epoch = (
+                validated.source_request.simulation_definition.synchronization_epoch
             )
+            if cancellation.is_cancelled:
+                return _result(
+                    validated,
+                    status=SimulationExecutionStatus.CANCELLED,
+                    final_epoch=synchronization_epoch,
+                    summary=empty_summary,
+                    detail=_cancelled_detail(),
+                )
+        except Exception as error:
+            raise SimulationExecutionError(_causal_detail(error)) from None
 
         runtime: ScienceBackendRuntime | None = None
         close_attempted = False
@@ -277,13 +340,14 @@ class BatchRunner:
                 validated,
                 status=SimulationExecutionStatus.CANCELLED,
                 final_epoch=final_epoch,
-                summary=buffers.summary(),
+                summary=empty_summary,
                 detail=detail,
             )
 
         try:
             ## -------------- step: resolve and initialize one isolated runtime ---------
             registration = self._registry.resolve(validated.source_request.backend.ref)
+            _validate_backend_provenance(validated, registration)
             runtime = registration.factory.create(validated)
             runtime.initialize()
             if cancellation.is_cancelled:
@@ -329,7 +393,8 @@ class BatchRunner:
             ## -------------- step: flush, close, recheck cancellation, then commit ---------
             if cancellation.is_cancelled:
                 return cancel_active(runtime.current_epoch)
-            buffers.flush_remaining()
+            if not buffers.flush_remaining(cancellation):
+                return cancel_active(runtime.current_epoch)
             if cancellation.is_cancelled:
                 return cancel_active(runtime.current_epoch)
             final_epoch = runtime.current_epoch

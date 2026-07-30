@@ -47,7 +47,10 @@ from sycasphere.core import (
     ManeuverCommand,
     ManeuverTruthSource,
     PlannedTruthManeuver,
+    PluginKind,
+    PluginRef,
     PreparedManeuverEntry,
+    ResolvedPluginRecord,
     SimulationExecutionManifest,
     SimulationExecutionStatus,
     SimulationOutputSummary,
@@ -180,6 +183,15 @@ class RecordingRuntime:
         self.inner.close()
 
 
+class ThrowingCancellationProbe:
+    """Raise an unknown implementation exception when the Engine reads cancellation."""
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Fail before returning a cancellation state."""
+        raise RuntimeError("Python traceback JavaObject: forbidden probe payload")
+
+
 @dataclass
 class RecordingFactory:
     """Create recording runtime wrappers or fail before runtime construction."""
@@ -213,6 +225,7 @@ class RecordingSink:
     failure_at: str | None = None
     failure_detail: ErrorDetail | None = None
     abort_also_fails: bool = False
+    cancel_after_truth_write: CancellationToken | None = None
     truth_states: list[TruthState] = field(default_factory=list)
     attitude_states: list[AttitudeState] = field(default_factory=list)
     truth_maneuvers: list[TruthManeuver] = field(default_factory=list)
@@ -241,6 +254,8 @@ class RecordingSink:
         self._fail("write")
         self.truth_batch_sizes.append(len(batch))
         self.truth_states.extend(batch)
+        if self.cancel_after_truth_write is not None:
+            self.cancel_after_truth_write.cancel()
 
     def write_attitude_states(self, batch: tuple[AttitudeState, ...]) -> None:
         """Record one immutable attitude batch."""
@@ -329,6 +344,21 @@ def serialized_records(
         tuple(record.model_dump_json() for record in sink.truth_states),
         tuple(record.model_dump_json() for record in sink.attitude_states),
         tuple(record.model_dump_json() for record in sink.truth_maneuvers),
+    )
+
+
+def manifest_with_backend_records(
+    manifest: SimulationExecutionManifest,
+    records: tuple[ResolvedPluginRecord, ...],
+) -> SimulationExecutionManifest:
+    """Rebuild one self-hashed manifest with caller-selected public plugin provenance."""
+    return SimulationExecutionManifest.create(
+        schema_version=manifest.schema_version,
+        source_request=manifest.source_request,
+        resolved_plugins=records,
+        resolved_external_data=manifest.resolved_external_data,
+        derived_random_streams=manifest.derived_random_streams,
+        prepared_timeline=manifest.prepared_timeline,
     )
 
 
@@ -472,6 +502,24 @@ def test_cancelled_before_run_touches_no_factory_runtime_or_sink() -> None:
     assert events == []
 
 
+def test_throwing_initial_cancellation_probe_is_sanitized_before_resource_creation() -> None:
+    """An unknown preflight probe failure cannot leak its language-level payload."""
+    registration, factory, events = recording_registration()
+    engine = engine_for(registration)
+    manifest = engine.prepare(make_fake_request())
+
+    with pytest.raises(SimulationExecutionError) as exc_info:
+        engine.run(manifest, RecordingSink(events), ThrowingCancellationProbe())
+
+    serialized = exc_info.value.detail.model_dump_json().lower()
+    assert exc_info.value.detail.category is ErrorCategory.INTERNAL_ERROR
+    assert factory.create_calls == 0
+    assert events == []
+    assert "python" not in serialized
+    assert "traceback" not in serialized
+    assert "javaobject" not in serialized
+
+
 def test_propagation_cancellation_aborts_once_closes_once_and_uses_runtime_epoch() -> None:
     """A backend safe-point cancellation reports its synchronized intermediate epoch."""
     registration, factory, events = recording_registration(
@@ -486,6 +534,7 @@ def test_propagation_cancellation_aborts_once_closes_once_and_uses_runtime_epoch
     assert result.final_epoch == utc("2026-07-30T00:00:05Z")
     assert sink.abort_calls == 1
     assert sink.commit_calls == 0
+    assert result.output_summary == SimulationOutputSummary()
     assert factory.runtime is not None
     assert factory.runtime.close_calls == 1
 
@@ -508,6 +557,7 @@ def test_cancellation_after_last_group_aborts_instead_of_committing() -> None:
     assert result.final_epoch == utc("2026-07-30T00:00:10Z")
     assert sink.commit_calls == 0
     assert sink.abort_calls == 1
+    assert result.output_summary == SimulationOutputSummary()
     assert factory.runtime is not None
     assert factory.runtime.close_calls == 1
 
@@ -534,7 +584,73 @@ def test_same_epoch_maneuver_group_is_atomic_before_cancellation() -> None:
         "command-final",
     ]
     assert sink.truth_states[-1].cartesian_state.velocity_mps == (1.0, 7_502.0, 0.0)
-    assert result.output_summary.truth_maneuver_count == 2
+    assert result.output_summary == SimulationOutputSummary()
+
+
+def test_final_residual_flush_stops_between_channels_when_a_write_cancels() -> None:
+    """Final residual writes recheck cancellation without interrupting event groups."""
+    token = CancellationToken()
+    registration, factory, events = recording_registration()
+    engine = engine_for(registration, batch_size=1024)
+    sink = RecordingSink(events, cancel_after_truth_write=token)
+
+    result = engine.run(engine.prepare(make_fake_request()), sink, token)
+
+    assert result.status is SimulationExecutionStatus.CANCELLED
+    assert sink.truth_states
+    assert sink.attitude_states == []
+    assert "sink.write_truth" in events
+    assert "sink.write_attitude" not in events
+    assert result.output_summary == SimulationOutputSummary()
+    assert sink.commit_calls == 0
+    assert sink.abort_calls == 1
+    assert factory.runtime is not None
+    assert factory.runtime.close_calls == 1
+
+
+@pytest.mark.parametrize("mismatch", ["missing", "ref", "kind", "configuration"])
+def test_run_rejects_mismatched_backend_provenance_before_factory(
+    mismatch: str,
+) -> None:
+    """A self-hashed manifest must bind its source backend to exact resolved provenance."""
+    registration, factory, events = recording_registration()
+    engine = engine_for(registration)
+    manifest = engine.prepare(make_fake_request())
+    source_binding = manifest.source_request.backend
+    if mismatch == "missing":
+        records: tuple[ResolvedPluginRecord, ...] = ()
+    else:
+        ref = source_binding.ref
+        kind = PluginKind.SCIENCE_BACKEND
+        configuration = source_binding.configuration
+        if mismatch == "ref":
+            ref = PluginRef(
+                plugin_id="user.example.mismatched-backend",
+                implementation_version=ref.implementation_version,
+                interface_version=ref.interface_version,
+            )
+        elif mismatch == "kind":
+            kind = PluginKind.MEASUREMENT_MODEL
+        elif mismatch == "configuration":
+            configuration = {"unexpected": "configuration"}
+        records = (
+            ResolvedPluginRecord.create(
+                component_id="science-backend",
+                kind=kind,
+                ref=ref,
+                configuration=configuration,
+            ),
+        )
+    mismatched = manifest_with_backend_records(manifest, records)
+
+    with pytest.raises(SimulationExecutionError) as exc_info:
+        engine.run(mismatched, RecordingSink(events), CancellationToken())
+
+    assert exc_info.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert exc_info.value.detail.code == "engine.execution.backend_provenance_mismatch"
+    assert exc_info.value.detail.context["mismatch"] == mismatch
+    assert factory.create_calls == 0
+    assert events == []
 
 
 # =============================👐Seperate👐=============================

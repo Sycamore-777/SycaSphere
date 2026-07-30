@@ -268,6 +268,10 @@ Engine 从 `synchronization_epoch` 初始化。若它早于正式 `time_range.st
 同刻多个机动逐个串联：后一个机动的 `state_before` 等于前一个机动的 `state_after`。
 同刻普通 `TruthState` 只表示全部机动执行后的状态。
 
+同刻事件组内部因达到 `batch_size` 触发的阈值刷新属于该原子组，不在刷新前读取取消
+状态。事件组之外的最终残余批次按固定通道顺序处理，并在写入每个非空批次前重新读取
+取消状态；某一残余写入触发取消后，不得继续写入后续通道。
+
 批次大小是非科学执行参数，只影响 sink 调用次数，不能改变记录内容、顺序、时刻或
 Manifest。
 
@@ -279,7 +283,7 @@ Manifest。
 - Manifest 校验完成后、创建 runtime 前；
 - runtime 初始化完成后；
 - 每个事件组开始前和完成后；
-- sink 批次刷新前；
+- 事件组之外每个非空残余批次刷新前；
 - 完成所有事件后、提交输出前。
 
 `propagate_to()` 同时接收只读取消探针，使耗时后端能够在自己的安全点停止。取消不能
@@ -287,7 +291,8 @@ Manifest。
 
 正常取消返回 `SimulationExecutionResult(status=CANCELLED)`，不抛异常。它携带类别为
 `CANCELLED` 的 `ErrorDetail`，调用 sink 的 `abort()`，并关闭 runtime。v0.1 不发布
-取消运行的部分科学 artifact；已经被实时消费者看到的数据只能视为未提交预览。
+取消运行的部分科学 artifact；已经被实时消费者看到的数据只能视为未提交预览。由于
+取消路径总是 abort，Result 的 `SimulationOutputSummary` 使用全零已提交计数。
 
 若调用 `run()` 前令牌已经取消，Engine 在 Manifest 校验后直接返回 CANCELLED，停止
 时刻取 `synchronization_epoch`，不创建 runtime，也不调用尚未开始的 sink。若
