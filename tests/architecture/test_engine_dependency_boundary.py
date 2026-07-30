@@ -42,7 +42,9 @@ import pytest
 FORBIDDEN_IMPORT_ROOTS = frozenset(
     {
         "fastapi",
+        "java",
         "jpype",
+        "kafka",
         "orekit",
         "pyarrow",
         "redis",
@@ -93,6 +95,15 @@ def test_scanner_rejects_forbidden_import_in_temporary_file(tmp_path: Path) -> N
     source_file.write_text("import jpype\n", encoding="utf-8")
 
     assert _find_forbidden_imports(source_file) == {source_file: {"jpype"}}
+
+
+@pytest.mark.parametrize("forbidden_root", ("java", "kafka"))
+def test_scanner_rejects_engine_binding_import_roots(tmp_path: Path, forbidden_root: str) -> None:
+    """The scanner rejects each additional Engine binding import root."""
+    source_file = tmp_path / f"{forbidden_root}_binding.py"
+    source_file.write_text(f"import {forbidden_root}\n", encoding="utf-8")
+
+    assert _find_forbidden_imports(source_file) == {source_file: {forbidden_root}}
 
 
 def test_scanner_rejects_absolute_sycasphere_outer_layer(tmp_path: Path) -> None:
