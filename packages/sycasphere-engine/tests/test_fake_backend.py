@@ -33,6 +33,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
+import sycasphere.engine.testing.fake_backend as fake_backend_module
 from conftest import (
     FAKE_BACKEND_ID,
     FAKE_DYNAMICS_ID,
@@ -47,6 +48,7 @@ from conftest import (
 )
 from pydantic import ValidationError
 from sycasphere.core import (
+    AttitudeState,
     CartesianState,
     DerivedRandomStream,
     EarthFixedFrameSpec,
@@ -176,6 +178,22 @@ def test_fake_factory_rejects_unlocked_backend_or_random_stream_manifest(
 
         assert exc_info.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
         assert exc_info.value.detail.code == expected_code
+
+
+def test_fake_factory_translates_invalid_manifest_integrity_error(
+    fake_manifest: SimulationExecutionManifest,
+) -> None:
+    """Factory translates Core integrity revalidation without leaking Pydantic errors."""
+    invalid_manifest = fake_manifest.model_copy(update={"content_hash": "0" * 64})
+
+    with pytest.raises(SimulationPreparationError) as exc_info:
+        FakeScienceBackendFactory().create(invalid_manifest)
+
+    assert exc_info.value.detail.category is ErrorCategory.VALIDATION_ERROR
+    assert exc_info.value.detail.code == "fake_backend.manifest_invalid"
+    assert exc_info.value.detail.message == "FakeBackend manifest failed integrity validation"
+    assert exc_info.value.detail.component_ref == "sycasphere.engine.testing.fake_backend"
+    assert exc_info.value.detail.context == {"validation_stage": "manifest_integrity"}
 
 
 def test_fake_validator_accepts_exact_request_and_ground_station_without_truth(
@@ -448,6 +466,7 @@ def test_fake_backend_propagates_constant_velocity_and_identity_attitude(
 
 def test_fake_backend_sorts_outputs_and_repeated_fresh_runtimes_match(
     fake_request_factory: Callable[..., SimulationRunRequest],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Manifest order cannot affect stable output order or fresh-run determinism."""
     request = fake_request_factory(
@@ -457,6 +476,21 @@ def test_fake_backend_sorts_outputs_and_repeated_fresh_runtimes_match(
         )
     )
     manifest = make_fake_manifest(request)
+    attitude_entity_order: list[str] = []
+    original_attitude_snapshot = fake_backend_module._attitude_snapshot
+
+    def record_attitude_entity(
+        state: fake_backend_module._EntityRuntimeState,
+    ) -> AttitudeState:
+        """Record the entity identity while preserving real snapshot behavior."""
+        attitude_entity_order.append(state.entity_id)
+        return original_attitude_snapshot(state)
+
+    monkeypatch.setattr(
+        fake_backend_module,
+        "_attitude_snapshot",
+        record_attitude_entity,
+    )
     results = []
     for _ in range(2):
         runtime = FakeScienceBackendFactory().create(manifest)
@@ -473,6 +507,12 @@ def test_fake_backend_sorts_outputs_and_repeated_fresh_runtimes_match(
         "spacecraft-a",
         "spacecraft-z",
     )
+    assert attitude_entity_order == [
+        "spacecraft-a",
+        "spacecraft-z",
+        "spacecraft-a",
+        "spacecraft-z",
+    ]
     assert results[0] == results[1]
 
 
@@ -560,6 +600,33 @@ def test_fake_backend_executes_j2000_impulse_without_changing_position_or_mass(
         execution.state_after.mass_kg = 499.0
 
 
+def test_fake_backend_maneuver_state_is_isolated_per_entity(
+    fake_request_factory: Callable[..., SimulationRunRequest],
+) -> None:
+    """Maneuvering one spacecraft cannot mutate another entity's numerical arrays."""
+    request = fake_request_factory(
+        entities=(
+            fake_spacecraft(
+                entity_id="spacecraft-z",
+                position_m=(8_000_000.0, 1.0, 2.0),
+                velocity_mps=(3.0, 4.0, 5.0),
+                mass_kg=600.0,
+            ),
+            fake_spacecraft(entity_id="spacecraft-a"),
+        )
+    )
+    runtime = FakeScienceBackendFactory().create(make_fake_manifest(request))
+    runtime.initialize()
+    before_by_id = {state.entity_id: state for state in runtime.snapshot_truth()}
+
+    runtime.execute_impulsive_maneuver(prepared_impulse(spacecraft_id="spacecraft-a"))
+    after_by_id = {state.entity_id: state for state in runtime.snapshot_truth()}
+
+    assert after_by_id["spacecraft-z"] == before_by_id["spacecraft-z"]
+    assert after_by_id["spacecraft-a"].cartesian_state.velocity_mps == (1.0, 7_498.0, 0.5)
+    assert runtime.current_epoch == before_by_id["spacecraft-z"].epoch
+
+
 @pytest.mark.parametrize(
     ("entry", "expected_code"),
     [
@@ -590,10 +657,6 @@ def test_fake_backend_executes_j2000_impulse_without_changing_position_or_mass(
             prepared_impulse(spacecraft_id="unknown-spacecraft"),
             "fake_backend.maneuver_entity_unknown",
         ),
-        (
-            prepared_impulse(epoch=utc("2026-07-30T00:00:01Z")),
-            "fake_backend.maneuver_epoch_mismatch",
-        ),
     ],
 )
 def test_fake_backend_rejects_unsupported_or_mismatched_maneuvers(
@@ -609,6 +672,67 @@ def test_fake_backend_rejects_unsupported_or_mismatched_maneuvers(
         runtime.execute_impulsive_maneuver(entry)
 
     assert exc_info.value.detail.code == expected_code
+
+
+@pytest.mark.parametrize(
+    ("entry_epoch", "expected_category", "expected_code", "expected_context"),
+    [
+        (
+            utc("2026-07-30T00:00:01Z"),
+            ErrorCategory.OUT_OF_ORDER,
+            "fake_backend.maneuver_epoch_mismatch",
+            {
+                "entry_epoch": {
+                    "value": "2026-07-30T00:00:01Z",
+                    "time_scale": "UTC",
+                },
+                "current_epoch": {
+                    "value": "2026-07-30T00:00:00Z",
+                    "time_scale": "UTC",
+                },
+            },
+        ),
+        (
+            Epoch(
+                value="2026-07-30T00:00:00",
+                time_scale=TimeScale.TAI,
+            ),
+            ErrorCategory.PLUGIN_INCOMPATIBLE,
+            "ENGINE_TIME_SCALE_MISMATCH",
+            {"left_time_scale": "TAI", "right_time_scale": "UTC"},
+        ),
+        (
+            utc("2016-12-31T23:59:60Z"),
+            ErrorCategory.PLUGIN_INCOMPATIBLE,
+            "ENGINE_TIME_LEAP_SECOND_UNSUPPORTED",
+            {
+                "epoch": "2016-12-31T23:59:60Z",
+                "time_scale": "UTC",
+            },
+        ),
+    ],
+)
+def test_fake_backend_rejects_incompatible_or_wrong_maneuver_epoch_without_mutation(
+    fake_manifest: SimulationExecutionManifest,
+    entry_epoch: Epoch,
+    expected_category: ErrorCategory,
+    expected_code: str,
+    expected_context: dict[str, object],
+) -> None:
+    """Time incompatibility stays distinct from valid same-scale out-of-order input."""
+    runtime = FakeScienceBackendFactory().create(fake_manifest)
+    runtime.initialize()
+    before = runtime.snapshot_truth()
+    before_epoch = runtime.current_epoch
+
+    with pytest.raises(SimulationExecutionError) as exc_info:
+        runtime.execute_impulsive_maneuver(prepared_impulse(epoch=entry_epoch))
+
+    assert exc_info.value.detail.category is expected_category
+    assert exc_info.value.detail.code == expected_code
+    assert exc_info.value.detail.context == expected_context
+    assert runtime.snapshot_truth() == before
+    assert runtime.current_epoch == before_epoch
 
 
 def test_fake_backend_lifecycle_requires_one_initialize_and_open_operations(

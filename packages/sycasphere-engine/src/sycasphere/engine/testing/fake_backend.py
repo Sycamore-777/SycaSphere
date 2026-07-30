@@ -39,6 +39,7 @@ from typing import NoReturn
 
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import ValidationError
 from sycasphere.core import (
     AttitudeState,
     CartesianState,
@@ -607,8 +608,8 @@ class _FakeScienceBackendRuntime:
         state = self._states[entry.spacecraft_id]
         try:
             same_epoch = self._time_adapter.same_instant(entry.epoch, self.current_epoch)
-        except SimulationPreparationError:
-            same_epoch = False
+        except SimulationPreparationError as error:
+            raise SimulationExecutionError(error.detail) from None
         if not same_epoch:
             _raise_execution(
                 "fake_backend.maneuver_epoch_mismatch",
@@ -654,7 +655,17 @@ class FakeScienceBackendFactory:
 
     def create(self, manifest: SimulationExecutionManifest) -> ScienceBackendRuntime:
         """Create one isolated runtime from an immutable manifest snapshot."""
-        snapshot = SimulationExecutionManifest.model_validate(manifest.model_dump(mode="python"))
+        try:
+            snapshot = SimulationExecutionManifest.model_validate(
+                manifest.model_dump(mode="python")
+            )
+        except ValidationError:
+            _raise_preparation(
+                "fake_backend.manifest_invalid",
+                "FakeBackend manifest failed integrity validation",
+                category=ErrorCategory.VALIDATION_ERROR,
+                context={"validation_stage": "manifest_integrity"},
+            )
         FakeBackendConfigurationValidator().validate(snapshot.source_request)
         expected_backend = ResolvedPluginRecord.create(
             component_id="science-backend",
