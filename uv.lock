@@ -5,6 +5,7 @@ requires-python = "==3.12.*"
 [manifest]
 members = [
     "sycasphere-core",
+    "sycasphere-engine",
     "sycasphere-workspace",
 ]
 
@@ -259,6 +260,21 @@ requires-dist = [
 ]
 
 [[package]]
+name = "sycasphere-engine"
+version = "0.1.0"
+source = { editable = "packages/sycasphere-engine" }
+dependencies = [
+    { name = "numpy" },
+    { name = "sycasphere-core" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.0,<3" },
+    { name = "sycasphere-core", editable = "packages/sycasphere-core" },
+]
+
+[[package]]
 name = "sycasphere-workspace"
 version = "0.0.0"
 source = { virtual = "." }
@@ -270,6 +286,7 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
     { name = "sycasphere-core" },
+    { name = "sycasphere-engine" },
 ]
 
 [package.metadata]
@@ -281,6 +298,7 @@ dev = [
     { name = "pytest", specifier = ">=8.4,<9" },
     { name = "ruff", specifier = ">=0.12,<1" },
     { name = "sycasphere-core", editable = "packages/sycasphere-core" },
+    { name = "sycasphere-engine", editable = "packages/sycasphere-engine" },
 ]
 
 [[package]]

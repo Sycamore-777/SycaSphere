@@ -1,0 +1,18 @@
+[project]
+name = "sycasphere-engine"
+version = "0.1.0"
+description = "Backend-neutral simulation runtime for SycaSphere"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "numpy>=2.0,<3",
+  "sycasphere-core",
+]
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sycasphere"]

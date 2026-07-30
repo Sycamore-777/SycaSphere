@@ -10,6 +10,7 @@ dev = [
   "pytest>=8.4,<9",
   "ruff>=0.12,<1",
   "sycasphere-core",
+  "sycasphere-engine",
 ]
 
 [tool.uv]
@@ -20,6 +21,7 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 sycasphere-core = { workspace = true }
+sycasphere-engine = { workspace = true }
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
@@ -39,5 +41,5 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 python_version = "3.12"
 strict = true
 explicit_package_bases = true
-packages = ["sycasphere.core"]
-mypy_path = ["packages/sycasphere-core/src"]
+packages = ["sycasphere.core", "sycasphere.engine"]
+mypy_path = ["packages/sycasphere-core/src", "packages/sycasphere-engine/src"]
