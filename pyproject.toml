@@ -24,7 +24,8 @@ sycasphere-core = { workspace = true }
 sycasphere-engine = { workspace = true }
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers"
+addopts = "--strict-config --strict-markers --import-mode=importlib"
+pythonpath = ["packages/sycasphere-engine/tests"]
 testpaths = ["packages/*/tests", "tests"]
 
 [tool.ruff]
