@@ -81,9 +81,10 @@ SycaSphere/
 
 当前已实现。保存纯领域契约：`Epoch`、`FrameRef`、状态、实体、传感器、仿真定义、
 机动、观测计划、执行请求、执行清单、公共异常和模式版本，以及姿态、Truth、
-Observation、测量不确定度、交付终态/汇总和最小流式信封。Engine 对这些结果的实际
-生成和 Platform 生命周期仍未实现。Core 不得依赖 Orekit、JPype、JVM、数据库、
-FastAPI 或前端。
+Observation、测量不确定度、交付终态/汇总和最小流式信封。Engine v0.1 已生成
+`TruthState`、`AttitudeState` 和 `TruthManeuver`；Observation、delivery 和 Estimate
+等仍未实现。Platform 生命周期也仍为计划。Core 不得依赖 Orekit、JPype、JVM、
+数据库、FastAPI 或前端。
 
 Core 的运行时依赖仍仅为 Pydantic 与 NumPy。根开发锁图显式包含 Hatchling；发布构建先以 `uv sync --locked` 同步，再以 `uv build --offline --no-build-isolation` 使用锁定后端，避免临时解析未跟踪的构建版本。
 
@@ -395,11 +396,17 @@ Java 异常不得泄漏为公共类型；Orekit adapter 转换为结构化错误
   StreamingEnvelope 的公开模式、状态矩阵、深度不可变与授权隔离；
 - `DELIVERY_RECORDS` 输出要求。
 
-### Engine（v0.1 批运行已验收；Session/Observation 项仍为计划）
+### Engine v0.1 批运行（已验收）
 
-- 使用假后端验证 prepare/run/session/restore 生命周期；
-- 固定种子和稳定派生随机流；
-- 事件调度、暂停、单步、推进到指定时刻和取消；
+- 使用假后端验证 prepare/run 生命周期；
+- 固定种子、确定性结果和惰性时间调度；
+- 取消、runtime 关闭和 sink commit/abort 生命周期；
+- J2000 脉冲机动以及 Truth、姿态和机动输出；
+- Engine wheel/sdist 构建和 Core + Engine 隔离安装。
+
+### Session 与 Observation（计划验收）
+
+- session/restore、暂停、单步和推进到指定时刻；
 - 每个 schedule trigger 的确定性 Event、漏测、质量拒绝、丢包、延迟和 FIFO；
 - 运行时脉冲机动、命令日志和 checkpoint 分支。
 
@@ -421,7 +428,9 @@ Java 异常不得泄漏为公共类型；Orekit adapter 转换为结构化错误
   `ResultBundle` 不可变；
 - 算法只能读取授权观测通道。
 
-### 安装隔离（Core 当前适用，其余包计划验收）
+### 安装隔离
+
+Core 和 Engine 已完成独立安装验证；Orekit、Sim、Platform 和前端安装仍为计划。
 
 - Core 可独立导入；
 - Engine 在无 JDK 时可导入和运行假后端测试；
