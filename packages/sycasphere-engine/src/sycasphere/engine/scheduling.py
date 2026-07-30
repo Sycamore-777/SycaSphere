@@ -6,8 +6,8 @@
 文件名    : scheduling.py
 创建者    : Sycamore
 创建日期  : 2026-07-30
-最后修改  : 2026-07-30
-版本号    : v1.0.1
+最后修改  : 2026-07-31
+版本号    : v1.2.0
 
 ■ 用途说明:
   提供后端中立的同时间尺度日历运算、闭区间惰性采样和确定性事件合并。
@@ -20,12 +20,16 @@
 ■ 功能特性:
   ✓ 拒绝跨时间尺度运算、UTC 闰秒语法和非有限偏移。
   ✓ 保持 UTC Z 后缀以及 TAI/TT 无时区序列化。
+  ✓ 仅调度同步至开始前的预设机动和正式闭区间内的全部机动。
   ✓ 同刻产品按枚举值排序，机动保持准备后的 order_index 顺序。
+  ✓ 在日历加法前按剩余时长截断超大采样周期。
 
 ■ 待办事项:
   - 无
 
 ■ 更新日志:
+  v1.2.0 (2026-07-31): 校验剩余时长并避免超大采样周期越界。
+  v1.1.0 (2026-07-31): 限定预推进和正式运行可执行机动区间。
   v1.0.1 (2026-07-30): 修复前导小数零精度并在首次产出前拒绝时间不兼容。
   v1.0.0 (2026-07-30): 初始版本。
 
@@ -47,6 +51,7 @@ from sycasphere.core import (
     ErrorCategory,
     OutputProduct,
     PreparedManeuverEntry,
+    PreparedManeuverSource,
     SamplingRule,
     SimulationExecutionManifest,
     SimulationTimeRange,
@@ -285,7 +290,20 @@ def iter_sampling_epochs(
     yield current
 
     while not time_adapter.same_instant(current, time_range.end):
-        ## -------------- step: calculate and validate the next cadence epoch ---------
+        ## -------------- step: clamp a covering cadence before calendar addition ---------
+        remaining_s = time_adapter.seconds_between(current, time_range.end)
+        if type(remaining_s) is not float or not math.isfinite(remaining_s) or remaining_s <= 0.0:
+            _raise_time_error(
+                code="ENGINE_SAMPLING_REMAINING_INVALID",
+                message="sampling time adapter returned an invalid remaining duration",
+                context={"product": rule.product.value},
+                category=ErrorCategory.PLUGIN_INCOMPATIBLE,
+            )
+        if rule.interval_s >= remaining_s:
+            yield time_range.end
+            return
+
+        ## -------------- step: calculate and validate the next interior cadence epoch ---------
         candidate = time_adapter.add_seconds(current, rule.interval_s)
         if time_adapter.compare(candidate, current) <= 0:
             _raise_time_error(
@@ -316,6 +334,22 @@ def _minimum_epoch(
     return earliest
 
 
+def _is_executable_maneuver(
+    entry: PreparedManeuverEntry,
+    *,
+    synchronization_epoch: Epoch,
+    time_range: SimulationTimeRange,
+    time_adapter: PreparationTimeAdapter,
+) -> bool:
+    """Select prestart planned Truth and all closed-interval formal maneuvers."""
+    if time_adapter.compare(entry.epoch, synchronization_epoch) < 0:
+        return False
+    relative_to_start = time_adapter.compare(entry.epoch, time_range.start)
+    if relative_to_start < 0:
+        return entry.source is PreparedManeuverSource.PLANNED
+    return time_adapter.compare(entry.epoch, time_range.end) <= 0
+
+
 def iter_event_groups(
     manifest: SimulationExecutionManifest,
     time_adapter: PreparationTimeAdapter,
@@ -332,7 +366,17 @@ def iter_event_groups(
     )
     samplers = tuple(iter(iter_sampling_epochs(time_range, rule, time_adapter)) for rule in rules)
     sample_lookaheads: list[Epoch | None] = [next(sampler, None) for sampler in samplers]
-    maneuvers = manifest.prepared_timeline.maneuvers
+    synchronization_epoch = manifest.source_request.simulation_definition.synchronization_epoch
+    maneuvers = tuple(
+        entry
+        for entry in manifest.prepared_timeline.maneuvers
+        if _is_executable_maneuver(
+            entry,
+            synchronization_epoch=synchronization_epoch,
+            time_range=time_range,
+            time_adapter=time_adapter,
+        )
+    )
     maneuver_cursor = 0
 
     while maneuver_cursor < len(maneuvers) or any(epoch is not None for epoch in sample_lookaheads):

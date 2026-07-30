@@ -142,16 +142,15 @@ Python entry point 发现不属于 v0.1。后续可增加一个独立装载器�
 
 ### 6.2 能力校验
 
-Engine 从请求推导所需能力并与 `PluginManifest.capabilities` 比较，包括：
+Engine 从请求只推导后端无关的通用能力并与 `PluginManifest.capabilities` 比较：
 
-- 公共坐标系；
-- 时间尺度组合；
-- 动力学和姿态模型 ID；
-- 输出产品；
-- 脉冲或有限推力机动；
-- 后端确定性声明。
+- 始终要求 `frame.j2000`、`time.same-scale` 和 `output.truth`；
+- 请求姿态输出时要求 `output.attitude`；
+- 存在脉冲机动时要求 `maneuver.impulsive.j2000`；
+- 后端必须声明 `deterministic=True`。
 
-配置校验器负责检查后端配置和该后端拥有的子模型配置，但不得初始化 runtime。
+Engine 不把请求中的动力学或姿态模型 ID 推导为通用 capability。配置校验器负责检查
+后端配置、精确模型 ID 及该后端拥有的子模型配置，但不得初始化 runtime。
 所有不支持的能力必须在 `prepare()` 失败，不能运行时静默忽略。
 
 v0.1 进一步要求：

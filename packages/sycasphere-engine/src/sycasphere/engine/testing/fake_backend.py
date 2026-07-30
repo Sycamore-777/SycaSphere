@@ -6,8 +6,8 @@
 文件名    : fake_backend.py
 创建者    : Sycamore
 创建日期  : 2026-07-30
-最后修改  : 2026-07-30
-版本号    : v1.0.0
+最后修改  : 2026-07-31
+版本号    : v1.0.1
 
 ■ 用途说明:
   提供非科学、确定性的 Engine 科学后端兼容性实现。
@@ -21,11 +21,13 @@
   ✓ 使用每次运行私有的 NumPy float64 数组执行匀速传播
   ✓ 生成 J2000 Truth、WXYZ 单位姿态和质量不变脉冲快照
   ✓ 保持 Engine/Core 边界不依赖 Orekit、JPype 或 Java
+  ✓ 仅通过 Core 模型边界处理清单验证错误
 
 ■ 待办事项:
   - [ ] 无
 
 ■ 更新日志:
+  v1.0.1 (2026-07-31): 移除生产代码对 Pydantic 异常类型的直接依赖。
   v1.0.0 (2026-07-30): 实现 FakeBackend 配置校验和确定性单次运行时
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -39,7 +41,6 @@ from typing import NoReturn
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import ValidationError
 from sycasphere.core import (
     AttitudeState,
     CartesianState,
@@ -659,7 +660,7 @@ class FakeScienceBackendFactory:
             snapshot = SimulationExecutionManifest.model_validate(
                 manifest.model_dump(mode="python")
             )
-        except ValidationError:
+        except (AttributeError, TypeError, ValueError):
             _raise_preparation(
                 "fake_backend.manifest_invalid",
                 "FakeBackend manifest failed integrity validation",

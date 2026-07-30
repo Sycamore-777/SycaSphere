@@ -6,8 +6,8 @@
 文件名    : test_engine_dependency_boundary.py
 创建者    : Sycamore
 创建日期  : 2026-07-30
-最后修改  : 2026-07-30
-版本号    : v1.0.0
+最后修改  : 2026-07-31
+版本号    : v1.1.0
 
 ■ 用途说明:
   验证 Engine 源码保持后端中立，不依赖受限基础设施或外层 SycaSphere 包。
@@ -18,12 +18,13 @@
 
 ■ 功能特性:
   ✓ 通过 AST 检查普通导入和绝对 from 导入。
-  ✓ 拒绝 Orekit 和 Platform 的绝对 SycaSphere 导入。
+  ✓ 拒绝 Orekit、Platform 和 Pydantic 的生产依赖。
 
 ■ 待办事项:
   - [ ] 后续任务增加 Engine 模块时继续由本测试守护边界。
 
 ■ 更新日志:
+  v1.1.0 (2026-07-31): 禁止 Engine 生产源码直接导入 Pydantic。
   v1.0.0 (2026-07-30): 初始版本。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -46,6 +47,7 @@ FORBIDDEN_IMPORT_ROOTS = frozenset(
         "jpype",
         "kafka",
         "orekit",
+        "pydantic",
         "pyarrow",
         "redis",
         "sqlalchemy",
@@ -97,7 +99,7 @@ def test_scanner_rejects_forbidden_import_in_temporary_file(tmp_path: Path) -> N
     assert _find_forbidden_imports(source_file) == {source_file: {"jpype"}}
 
 
-@pytest.mark.parametrize("forbidden_root", ("java", "kafka"))
+@pytest.mark.parametrize("forbidden_root", ("java", "kafka", "pydantic"))
 def test_scanner_rejects_engine_binding_import_roots(tmp_path: Path, forbidden_root: str) -> None:
     """The scanner rejects each additional Engine binding import root."""
     source_file = tmp_path / f"{forbidden_root}_binding.py"

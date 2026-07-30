@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-31
 最后修改  : 2026-07-31
-版本号    : v1.1.0
+版本号    : v1.2.0
 
 ■ 用途说明:
   验证 Engine 准备期的边界快照、v0.1 范围分类、插件解析和稳定时间线。
@@ -21,11 +21,13 @@
   ✓ 覆盖通用注册项的外部数据和可变输入快照
   ✓ 证明全部准备期消费时刻均经过已解析后端时间适配器
   ✓ 保证 prepare 不创建 runtime
+  ✓ 覆盖插件通用能力、确定性、清单重验证和异常消毒
 
 ■ 待办事项:
   - 无
 
 ■ 更新日志:
+  v1.2.0 (2026-07-31): 增加后端能力、清单完整性和异常边界回归。
   v1.1.0 (2026-07-31): 增加消费时刻适配器验证和补充帧遍历分支
   v1.0.0 (2026-07-31): 创建 Manifest 准备期合同测试
 
@@ -67,6 +69,7 @@ from sycasphere.core import (
     OutputSampling,
     PeriodicObservationSchedule,
     PlannedTruthManeuver,
+    PluginManifest,
     PluginRef,
     RigidTransform,
     SamplingRule,
@@ -153,6 +156,53 @@ class AcceptingValidator:
 
     def validate(self, request: SimulationRunRequest) -> None:
         """Accept the already revalidated public request."""
+
+
+@dataclass
+class RaisingValidator:
+    """Raise one caller-selected third-party exception while recording invocation."""
+
+    error: BaseException
+    validate_calls: int = 0
+
+    def validate(self, request: SimulationRunRequest) -> None:
+        """Raise without exposing the validated request."""
+        del request
+        self.validate_calls += 1
+        raise self.error
+
+
+@dataclass
+class RaisingTimeAdapter:
+    """Fail at the first third-party time operation."""
+
+    error: Exception
+    compare_calls: int = 0
+
+    def compare(self, left: Epoch, right: Epoch) -> int:
+        """Raise the configured unknown adapter failure."""
+        del left, right
+        self.compare_calls += 1
+        raise self.error
+
+    def seconds_between(self, start: Epoch, end: Epoch) -> float:
+        """Remain unreachable during preparation."""
+        del start, end
+        raise AssertionError("seconds_between must not be called")
+
+    def add_seconds(self, epoch: Epoch, seconds: float) -> Epoch:
+        """Remain unreachable during preparation."""
+        del epoch, seconds
+        raise AssertionError("add_seconds must not be called")
+
+    def same_instant(self, left: Epoch, right: Epoch) -> bool:
+        """Remain unreachable during preparation."""
+        del left, right
+        raise AssertionError("same_instant must not be called")
+
+
+class PreparationStop(BaseException):
+    """Sentinel proving the public boundary does not swallow BaseException."""
 
 
 @pytest.fixture
@@ -622,6 +672,87 @@ def test_prepare_revalidates_a_construct_bypassed_nonpositive_output_interval(
     }
 
 
+def test_prepare_classifies_non_model_input_without_touching_plugin_dependencies(
+    recording_fake_registration: ScienceBackendRegistration,
+) -> None:
+    """A non-request object fails at the public boundary before plugin resolution work."""
+    with pytest.raises(SimulationPreparationError) as captured:
+        ManifestPreparer(PluginRegistry((recording_fake_registration,))).prepare(
+            cast(SimulationRunRequest, object())
+        )
+
+    assert captured.value.detail.category is ErrorCategory.VALIDATION_ERROR
+    assert captured.value.detail.code == "engine.request_invalid"
+    assert captured.value.detail.context == {
+        "validation_stage": "simulation_run_request",
+    }
+    assert _recording_validator(recording_fake_registration).validate_calls == 0
+    assert _recording_factory(recording_fake_registration).create_calls == 0
+
+
+@pytest.mark.parametrize("failure_boundary", ("validator", "time_adapter"))
+def test_prepare_sanitizes_unknown_plugin_failures_as_internal_error(
+    fake_request: SimulationRunRequest,
+    failure_boundary: str,
+) -> None:
+    """Unknown validator and time-adapter exceptions never leak implementation payloads."""
+    base = fake_backend_registration()
+    validator: BackendConfigurationValidator
+    time_adapter: PreparationTimeAdapter
+    if failure_boundary == "validator":
+        validator = RaisingValidator(
+            RuntimeError("JavaException traceback secret validator context")
+        )
+        time_adapter = base.time_adapter
+    else:
+        validator = RecordingValidator(base.configuration_validator)
+        time_adapter = RaisingTimeAdapter(
+            RuntimeError("JavaObject traceback secret adapter context")
+        )
+    factory = RecordingFactory(base.factory)
+    registration = replace(
+        base,
+        configuration_validator=validator,
+        time_adapter=time_adapter,
+        factory=factory,
+    )
+
+    with pytest.raises(SimulationPreparationError) as captured:
+        ManifestPreparer(PluginRegistry((registration,))).prepare(fake_request)
+
+    serialized = captured.value.detail.model_dump_json().lower()
+    assert captured.value.detail.category is ErrorCategory.INTERNAL_ERROR
+    assert captured.value.detail.code == "engine.preparation.internal_error"
+    assert captured.value.detail.message == "Simulation preparation failed."
+    assert captured.value.detail.context == {}
+    assert "java" not in serialized
+    assert "traceback" not in serialized
+    assert "secret" not in serialized
+    assert factory.create_calls == 0
+
+
+def test_prepare_does_not_swallow_base_exception(
+    fake_request: SimulationRunRequest,
+) -> None:
+    """The outer preparation boundary catches ordinary exceptions, not BaseException."""
+    base = fake_backend_registration()
+    stop = PreparationStop()
+    validator = RaisingValidator(stop)
+    factory = RecordingFactory(base.factory)
+    registration = replace(
+        base,
+        configuration_validator=validator,
+        factory=factory,
+    )
+
+    with pytest.raises(PreparationStop) as captured:
+        ManifestPreparer(PluginRegistry((registration,))).prepare(fake_request)
+
+    assert captured.value is stop
+    assert validator.validate_calls == 1
+    assert factory.create_calls == 0
+
+
 @pytest.mark.parametrize(
     ("mutator", "expected_code", "expected_feature"),
     [
@@ -764,6 +895,146 @@ def test_prepare_preserves_fake_backend_environment_and_model_errors(
     assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
     assert captured.value.detail.code == expected_code
     assert _recording_validator(recording_fake_registration).validate_calls == 1
+
+
+@pytest.mark.parametrize(
+    "missing_capability",
+    (
+        "output.truth",
+        "output.attitude",
+        "frame.j2000",
+        "time.same-scale",
+        "maneuver.impulsive.j2000",
+    ),
+)
+def test_prepare_requires_engine_owned_common_backend_capabilities(
+    fake_request: SimulationRunRequest,
+    missing_capability: str,
+) -> None:
+    """Engine derives universal run capabilities before backend-owned validation."""
+    base = fake_backend_registration()
+    manifest = base.manifest.model_copy(
+        update={"capabilities": base.manifest.capabilities - {missing_capability}}
+    )
+    validator = RecordingValidator(base.configuration_validator)
+    factory = RecordingFactory(base.factory)
+    registration = replace(
+        base,
+        manifest=manifest,
+        configuration_validator=validator,
+        factory=factory,
+    )
+    request = fake_request
+    if missing_capability == "maneuver.impulsive.j2000":
+        planned = _planned("required-impulse", request.time_range.start)
+        request = _validated_request(
+            request,
+            simulation_definition=request.simulation_definition.model_copy(
+                update={"planned_maneuvers": (planned,)}
+            ),
+        )
+
+    with pytest.raises(SimulationPreparationError) as captured:
+        ManifestPreparer(PluginRegistry((registration,))).prepare(request)
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == "engine.backend_capabilities_missing"
+    assert captured.value.detail.model_dump(mode="json")["context"] == {
+        "missing_capabilities": [missing_capability],
+    }
+    assert validator.validate_calls == 0
+    assert factory.create_calls == 0
+
+
+def test_prepare_derives_optional_common_capabilities_only_when_requested(
+    fake_request: SimulationRunRequest,
+) -> None:
+    """Attitude and impulsive capabilities are not inferred from backend-owned model IDs."""
+    base = fake_backend_registration()
+    manifest = base.manifest.model_copy(
+        update={
+            "capabilities": frozenset(
+                {
+                    "frame.j2000",
+                    "output.truth",
+                    "time.same-scale",
+                }
+            )
+        }
+    )
+    validator = RecordingValidator(AcceptingValidator())
+    factory = RecordingFactory(base.factory)
+    registration = replace(
+        base,
+        manifest=manifest,
+        configuration_validator=validator,
+        factory=factory,
+    )
+    request = make_fake_request(include_attitude=False)
+
+    prepared = ManifestPreparer(PluginRegistry((registration,))).prepare(request)
+
+    assert prepared.resolved_plugins[0].ref == manifest.ref
+    assert validator.validate_calls == 1
+    assert factory.create_calls == 0
+
+
+def test_prepare_rejects_nondeterministic_backend_before_validator(
+    fake_request: SimulationRunRequest,
+) -> None:
+    """A v0.1 run cannot use a backend whose public manifest is nondeterministic."""
+    base = fake_backend_registration()
+    validator = RecordingValidator(base.configuration_validator)
+    factory = RecordingFactory(base.factory)
+    registration = replace(
+        base,
+        manifest=base.manifest.model_copy(update={"deterministic": False}),
+        configuration_validator=validator,
+        factory=factory,
+    )
+
+    with pytest.raises(SimulationPreparationError) as captured:
+        ManifestPreparer(PluginRegistry((registration,))).prepare(fake_request)
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == "engine.backend_nondeterministic"
+    assert captured.value.detail.context == {"required_deterministic": True}
+    assert validator.validate_calls == 0
+    assert factory.create_calls == 0
+
+
+def test_prepare_revalidates_registration_manifest_before_use(
+    fake_request: SimulationRunRequest,
+) -> None:
+    """Construct-bypassed plugin data cannot cross the preparation boundary."""
+    base = fake_backend_registration()
+    malformed_manifest = PluginManifest.model_construct(
+        ref=base.manifest.ref,
+        kind=base.manifest.kind,
+        capabilities=("invalid capability",),
+        configuration_schema=base.manifest.configuration_schema,
+        deterministic=base.manifest.deterministic,
+        resources=base.manifest.resources,
+    )
+    validator = RecordingValidator(base.configuration_validator)
+    factory = RecordingFactory(base.factory)
+    registration = replace(
+        base,
+        manifest=malformed_manifest,
+        configuration_validator=validator,
+        factory=factory,
+    )
+
+    with pytest.raises(SimulationPreparationError) as captured:
+        ManifestPreparer(PluginRegistry((registration,))).prepare(fake_request)
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == "engine.backend_manifest_invalid"
+    assert captured.value.detail.context == {
+        "validation_stage": "plugin_manifest",
+    }
+    assert validator.validate_calls == 0
+    assert factory.create_calls == 0
 
 
 @pytest.mark.parametrize(

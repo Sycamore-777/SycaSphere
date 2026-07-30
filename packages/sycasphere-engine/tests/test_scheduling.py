@@ -6,8 +6,8 @@
 文件名    : test_scheduling.py
 创建者    : Sycamore
 创建日期  : 2026-07-30
-最后修改  : 2026-07-30
-版本号    : v1.0.1
+最后修改  : 2026-07-31
+版本号    : v1.2.0
 
 ■ 用途说明:
   验证 Engine 同时间尺度日历运算、闭区间惰性采样和确定性事件合并。
@@ -25,6 +25,8 @@
   - 无
 
 ■ 更新日志:
+  v1.2.0 (2026-07-31): 增加超大采样周期和非法剩余时长回归覆盖。
+  v1.1.0 (2026-07-31): 增加正式区间机动筛选回归覆盖。
   v1.0.1 (2026-07-30): 增加前导小数零、预产出校验和不兼容类别回归覆盖。
   v1.0.0 (2026-07-30): 初始版本。
 
@@ -49,6 +51,7 @@ from sycasphere.core import (
     PreparedManeuverSource,
     PreparedTimeline,
     SamplingRule,
+    SimulationDefinition,
     SimulationExecutionManifest,
     SimulationRunRequest,
     SimulationTimeRange,
@@ -86,12 +89,13 @@ def prepared_maneuver(
     order_index: int,
     source: PreparedManeuverSource,
     epoch: Epoch,
+    event_id: str | None = None,
 ) -> PreparedManeuverEntry:
     """Build one valid prepared impulsive maneuver."""
     return PreparedManeuverEntry(
         order_index=order_index,
         source=source,
-        event_id=f"event-{order_index}",
+        event_id=f"event-{order_index}" if event_id is None else event_id,
         spacecraft_id="spacecraft-1",
         epoch=epoch,
         maneuver=ImpulsiveManeuverSpec(
@@ -106,9 +110,17 @@ def minimal_manifest(
     time_range: SimulationTimeRange,
     rules: tuple[SamplingRule, ...],
     maneuvers: tuple[PreparedManeuverEntry, ...],
+    synchronization_epoch: Epoch | None = None,
 ) -> SimulationExecutionManifest:
     """Build only the validated Core manifest branches consumed by scheduling."""
-    source_request = SimulationRunRequest.model_construct(time_range=time_range)
+    source_request = SimulationRunRequest.model_construct(
+        time_range=time_range,
+        simulation_definition=SimulationDefinition.model_construct(
+            synchronization_epoch=(
+                time_range.start if synchronization_epoch is None else synchronization_epoch
+            )
+        ),
+    )
     timeline = PreparedTimeline(
         maneuvers=maneuvers,
         output_sampling=OutputSampling(rules=rules),
@@ -137,6 +149,17 @@ class StagnantTimeAdapter(SameScaleCalendarTimeAdapter):
     def add_seconds(self, epoch: Epoch, seconds: float) -> Epoch:
         """Deliberately make no progress."""
         return epoch
+
+
+class InvalidRemainingTimeAdapter(SameScaleCalendarTimeAdapter):
+    """Return one invalid remaining duration to exercise the adapter boundary."""
+
+    def __init__(self, remaining: object) -> None:
+        self.remaining = remaining
+
+    def seconds_between(self, start: Epoch, end: Epoch) -> float:
+        """Return a deliberately malformed remaining duration."""
+        return self.remaining  # type: ignore[return-value]
 
 
 _UNSUPPORTED_TIME_RANGES = (
@@ -345,6 +368,57 @@ def test_sampling_emits_divisible_end_exactly_once() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("start", "end"),
+    (
+        (
+            utc("2026-07-30T00:00:00Z"),
+            utc("2026-07-30T00:00:10Z"),
+        ),
+        (
+            utc("9999-12-31T23:59:58Z"),
+            utc("9999-12-31T23:59:59Z"),
+        ),
+    ),
+)
+def test_sampling_clamps_oversized_interval_before_calendar_add(
+    start: Epoch,
+    end: Epoch,
+) -> None:
+    """An interval covering the remainder yields the exact end without overflow."""
+    rule = SamplingRule(product=OutputProduct.TRUTH_STATE, interval_s=1e300)
+
+    assert tuple(
+        iter_sampling_epochs(
+            SimulationTimeRange(start=start, end=end),
+            rule,
+            SameScaleCalendarTimeAdapter(),
+        )
+    ) == (start, end)
+
+
+@pytest.mark.parametrize("remaining", (0.0, float("nan"), 1))
+def test_sampling_rejects_invalid_remaining_duration(remaining: object) -> None:
+    """The untrusted time adapter must return a finite positive built-in float."""
+    time_range = SimulationTimeRange(
+        start=utc("2026-07-30T00:00:00Z"),
+        end=utc("2026-07-30T00:00:10Z"),
+    )
+    rule = SamplingRule(product=OutputProduct.TRUTH_STATE, interval_s=1.0)
+
+    with pytest.raises(SimulationPreparationError) as captured:
+        tuple(
+            iter_sampling_epochs(
+                time_range,
+                rule,
+                InvalidRemainingTimeAdapter(remaining),
+            )
+        )
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == "ENGINE_SAMPLING_REMAINING_INVALID"
+
+
 def test_sampling_is_lazy_for_a_large_future_range() -> None:
     adapter = CountingTimeAdapter()
     time_range = SimulationTimeRange(
@@ -439,6 +513,98 @@ def test_event_merge_groups_maneuvers_and_sorted_products() -> None:
         "2026-07-30T00:00:10Z",
         "2026-07-30T00:00:15Z",
     )
+
+
+def test_event_merge_executes_only_authorized_interval_maneuvers() -> None:
+    """Scheduling retains provenance but emits only prestart PLANNED and closed-run events."""
+    adapter = SameScaleCalendarTimeAdapter()
+    synchronization_epoch = utc("2026-07-30T00:00:00Z")
+    start = utc("2026-07-30T00:00:05Z")
+    end = utc("2026-07-30T00:00:10Z")
+    after_end = utc("2026-07-30T00:00:11Z")
+    entries = (
+        prepared_maneuver(
+            order_index=0,
+            source=PreparedManeuverSource.PLANNED,
+            epoch=synchronization_epoch,
+            event_id="planned-sync",
+        ),
+        prepared_maneuver(
+            order_index=1,
+            source=PreparedManeuverSource.COMMAND,
+            epoch=utc("2026-07-30T00:00:02Z"),
+            event_id="command-prestart",
+        ),
+        prepared_maneuver(
+            order_index=2,
+            source=PreparedManeuverSource.PLANNED,
+            epoch=utc("2026-07-30T00:00:03Z"),
+            event_id="planned-prestart",
+        ),
+        prepared_maneuver(
+            order_index=3,
+            source=PreparedManeuverSource.PLANNED,
+            epoch=start,
+            event_id="planned-start",
+        ),
+        prepared_maneuver(
+            order_index=4,
+            source=PreparedManeuverSource.COMMAND,
+            epoch=start,
+            event_id="command-start",
+        ),
+        prepared_maneuver(
+            order_index=5,
+            source=PreparedManeuverSource.PLANNED,
+            epoch=end,
+            event_id="planned-end",
+        ),
+        prepared_maneuver(
+            order_index=6,
+            source=PreparedManeuverSource.COMMAND,
+            epoch=end,
+            event_id="command-end",
+        ),
+        prepared_maneuver(
+            order_index=7,
+            source=PreparedManeuverSource.PLANNED,
+            epoch=after_end,
+            event_id="planned-after-end",
+        ),
+        prepared_maneuver(
+            order_index=8,
+            source=PreparedManeuverSource.COMMAND,
+            epoch=after_end,
+            event_id="command-after-end",
+        ),
+    )
+    manifest = minimal_manifest(
+        time_range=SimulationTimeRange(start=start, end=end),
+        rules=(SamplingRule(product=OutputProduct.TRUTH_STATE, interval_s=5.0),),
+        maneuvers=entries,
+        synchronization_epoch=synchronization_epoch,
+    )
+
+    groups = tuple(iter_event_groups(manifest, adapter))
+
+    assert manifest.prepared_timeline.maneuvers == entries
+    assert tuple(
+        (group.epoch.value, tuple(entry.event_id for entry in group.maneuvers)) for group in groups
+    ) == (
+        ("2026-07-30T00:00:00Z", ("planned-sync",)),
+        ("2026-07-30T00:00:03Z", ("planned-prestart",)),
+        (
+            "2026-07-30T00:00:05Z",
+            ("planned-start", "command-start"),
+        ),
+        (
+            "2026-07-30T00:00:10Z",
+            ("planned-end", "command-end"),
+        ),
+    )
+    assert tuple(
+        group.epoch for group in groups if group.sample_products == (OutputProduct.TRUTH_STATE,)
+    ) == (start, end)
 
 
 def test_event_merge_keeps_only_one_sampling_lookahead_per_rule() -> None:

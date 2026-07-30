@@ -6,8 +6,8 @@
 文件名    : test_execution.py
 创建者    : Sycamore
 创建日期  : 2026-07-30
-最后修改  : 2026-07-30
-版本号    : v1.0.0
+最后修改  : 2026-07-31
+版本号    : v1.1.0
 
 ■ 用途说明:
   验证公共 SimulationEngine 的批运行、取消、错误清理和确定性语义。
@@ -27,6 +27,7 @@
   - 无
 
 ■ 更新日志:
+  v1.1.0 (2026-07-31): 增加区间筛选和第三方 runtime 契约加固回归覆盖。
   v1.0.0 (2026-07-30): 初始版本。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -41,9 +42,14 @@ import pytest
 from conftest import fake_impulse, fake_spacecraft, make_fake_request, utc
 from sycasphere.core import (
     AttitudeState,
+    CartesianState,
+    CoordinateRepresentation,
+    EarthFixedFrameSpec,
     Epoch,
     ErrorCategory,
     ErrorDetail,
+    FrameKind,
+    FrameRef,
     ManeuverCommand,
     ManeuverTruthSource,
     PlannedTruthManeuver,
@@ -90,6 +96,43 @@ def execution_detail(code: str) -> ErrorDetail:
     )
 
 
+def earth_fixed_frame() -> FrameRef:
+    """Build one valid non-J2000 Cartesian frame for runtime-contract tests."""
+    return FrameRef(
+        kind=FrameKind.EARTH_FIXED,
+        representation=CoordinateRepresentation.CARTESIAN,
+        earth_fixed=EarthFixedFrameSpec(
+            itrf_realization="ITRF2020",
+            iers_conventions="IERS_2010",
+            eop_data_id="test-eop",
+        ),
+    )
+
+
+def truth_at_epoch(state: TruthState, epoch: Epoch) -> TruthState:
+    """Copy one Truth snapshot to a caller-selected valid epoch."""
+    cartesian = state.cartesian_state.model_copy(update={"epoch": epoch})
+    return state.model_copy(update={"cartesian_state": cartesian})
+
+
+def truth_in_frame(state: TruthState, frame: FrameRef) -> TruthState:
+    """Copy one Truth snapshot to a caller-selected valid Cartesian frame."""
+    cartesian = state.cartesian_state.model_copy(update={"frame": frame})
+    return state.model_copy(update={"cartesian_state": cartesian})
+
+
+class DerivedTruthState(TruthState):
+    """Third-party subclass that must not cross the exact Core boundary."""
+
+
+class DerivedAttitudeState(AttitudeState):
+    """Third-party subclass that must not cross the exact Core boundary."""
+
+
+class DerivedManeuverExecution(ManeuverExecution):
+    """Third-party subclass that must not cross the exact Engine dataclass boundary."""
+
+
 @dataclass
 class RecordingRuntime:
     """Wrap a real FakeBackend runtime while recording and injecting lifecycle behavior."""
@@ -102,9 +145,18 @@ class RecordingRuntime:
     cancel_after_first_maneuver: bool = False
     cancel_at_final_truth_snapshot: bool = False
     cancel_during_second_propagation: bool = False
+    initial_epoch_override: object | None = None
+    outcome_override: object | None = None
+    reach_without_propagating: bool = False
+    cancel_after_target: bool = False
+    truth_violation: str | None = None
+    attitude_violation: str | None = None
+    maneuver_violation: str | None = None
+    corrupt_final_epoch_after_truth: bool = False
     close_calls: int = 0
     propagation_calls: int = 0
     maneuver_calls: int = 0
+    _reported_epoch_override: object | None = field(default=None, init=False)
 
     def _fail(self, operation: str) -> None:
         """Raise the configured structured or unknown failure at one operation."""
@@ -117,6 +169,10 @@ class RecordingRuntime:
     @property
     def current_epoch(self) -> Epoch:
         """Return the wrapped runtime epoch."""
+        if self._reported_epoch_override is not None:
+            return cast(Epoch, self._reported_epoch_override)
+        if self.initial_epoch_override is not None:
+            return cast(Epoch, self.initial_epoch_override)
         return self.inner.current_epoch
 
     def initialize(self) -> None:
@@ -134,30 +190,86 @@ class RecordingRuntime:
         self.events.append("runtime.propagate")
         self.propagation_calls += 1
         self._fail("propagate")
+        if self.reach_without_propagating:
+            return PropagationOutcome.REACHED_TARGET
+        if self.cancel_after_target:
+            overshoot = SameScaleCalendarTimeAdapter().add_seconds(target_epoch, 1.0)
+            self.inner.propagate_to(overshoot, CancellationToken())
+            return PropagationOutcome.CANCELLED
         if self.cancel_during_second_propagation and self.propagation_calls == 2:
             intermediate = SameScaleCalendarTimeAdapter().add_seconds(self.current_epoch, 5.0)
             outcome = self.inner.propagate_to(intermediate, CancellationToken())
             assert outcome is PropagationOutcome.REACHED_TARGET
             return PropagationOutcome.CANCELLED
-        return self.inner.propagate_to(target_epoch, cancellation)
+        outcome = self.inner.propagate_to(target_epoch, cancellation)
+        if self.outcome_override is not None:
+            return cast(PropagationOutcome, self.outcome_override)
+        return outcome
 
     def snapshot_truth(self) -> tuple[TruthState, ...]:
         """Record and optionally request cancellation after the final Truth snapshot."""
         self.events.append("runtime.snapshot_truth")
         self._fail("write_source")
         snapshots = self.inner.snapshot_truth()
+        if self.truth_violation == "not_tuple":
+            return cast(tuple[TruthState, ...], list(snapshots))
+        if self.truth_violation == "missing":
+            return ()
+        if self.truth_violation == "duplicate":
+            return (snapshots[0], snapshots[0])
+        if self.truth_violation == "unstable_order":
+            return tuple(reversed(snapshots))
+        if self.truth_violation == "wrong_epoch":
+            wrong_epoch = SameScaleCalendarTimeAdapter().add_seconds(self.inner.current_epoch, 1.0)
+            return (truth_at_epoch(snapshots[0], wrong_epoch), *snapshots[1:])
+        if self.truth_violation == "wrong_frame":
+            return (truth_in_frame(snapshots[0], earth_fixed_frame()), *snapshots[1:])
+        if self.truth_violation == "construct_bypassed":
+            invalid = snapshots[0].model_copy(update={"mass_kg": -1.0})
+            return (invalid, *snapshots[1:])
+        if self.truth_violation == "subclass":
+            derived = DerivedTruthState.model_validate(snapshots[0].model_dump(mode="python"))
+            return (derived, *snapshots[1:])
         if (
             self.cancel_at_final_truth_snapshot
             and self.cancellation_token is not None
             and self.current_epoch == utc("2026-07-30T00:00:10Z")
         ):
             self.cancellation_token.cancel()
+        if self.corrupt_final_epoch_after_truth and self.inner.current_epoch == utc(
+            "2026-07-30T00:00:10Z"
+        ):
+            self._reported_epoch_override = utc("2026-07-30T00:00:09Z")
         return snapshots
 
     def snapshot_attitudes(self) -> tuple[AttitudeState, ...]:
         """Return wrapped stable attitudes."""
         self.events.append("runtime.snapshot_attitudes")
-        return self.inner.snapshot_attitudes()
+        snapshots = self.inner.snapshot_attitudes()
+        if self.attitude_violation == "not_tuple":
+            return cast(tuple[AttitudeState, ...], list(snapshots))
+        if self.attitude_violation == "wrong_count":
+            return ()
+        if self.attitude_violation == "wrong_epoch":
+            wrong_epoch = SameScaleCalendarTimeAdapter().add_seconds(self.inner.current_epoch, 1.0)
+            return (
+                snapshots[0].model_copy(update={"epoch": wrong_epoch}),
+                *snapshots[1:],
+            )
+        if self.attitude_violation == "wrong_frame":
+            return (
+                snapshots[0].model_copy(update={"reference_frame": earth_fixed_frame()}),
+                *snapshots[1:],
+            )
+        if self.attitude_violation == "construct_bypassed":
+            invalid = snapshots[0].model_copy(
+                update={"rotation_reference_to_body_wxyz": (2.0, 0.0, 0.0, 0.0)}
+            )
+            return (invalid, *snapshots[1:])
+        if self.attitude_violation == "subclass":
+            derived = DerivedAttitudeState.model_validate(snapshots[0].model_dump(mode="python"))
+            return (derived, *snapshots[1:])
+        return snapshots
 
     def execute_impulsive_maneuver(
         self,
@@ -173,6 +285,61 @@ class RecordingRuntime:
             and self.cancellation_token is not None
         ):
             self.cancellation_token.cancel()
+        if self.maneuver_violation == "not_dataclass":
+            return cast(ManeuverExecution, object())
+        if self.maneuver_violation == "subclass":
+            return DerivedManeuverExecution(
+                executed_epoch=result.executed_epoch,
+                actual_delta_v_j2000_mps=result.actual_delta_v_j2000_mps,
+                state_before=result.state_before,
+                state_after=result.state_after,
+            )
+        if self.maneuver_violation == "wrong_entity":
+            before = result.state_before.model_copy(update={"entity_id": "spacecraft-other"})
+            after = result.state_after.model_copy(update={"entity_id": "spacecraft-other"})
+            return ManeuverExecution(
+                executed_epoch=result.executed_epoch,
+                actual_delta_v_j2000_mps=result.actual_delta_v_j2000_mps,
+                state_before=before,
+                state_after=after,
+            )
+        if self.maneuver_violation == "wrong_epoch":
+            wrong_epoch = SameScaleCalendarTimeAdapter().add_seconds(result.executed_epoch, 1.0)
+            return ManeuverExecution(
+                executed_epoch=wrong_epoch,
+                actual_delta_v_j2000_mps=result.actual_delta_v_j2000_mps,
+                state_before=truth_at_epoch(result.state_before, wrong_epoch),
+                state_after=truth_at_epoch(result.state_after, wrong_epoch),
+            )
+        if self.maneuver_violation == "wrong_frame":
+            return ManeuverExecution(
+                executed_epoch=result.executed_epoch,
+                actual_delta_v_j2000_mps=result.actual_delta_v_j2000_mps,
+                state_before=truth_in_frame(result.state_before, earth_fixed_frame()),
+                state_after=truth_in_frame(result.state_after, earth_fixed_frame()),
+            )
+        if self.maneuver_violation == "broken_chain" and self.maneuver_calls == 2:
+            broken_before = result.state_before.model_copy(
+                update={
+                    "cartesian_state": CartesianState(
+                        epoch=result.state_before.epoch,
+                        frame=result.state_before.cartesian_state.frame,
+                        position_m=result.state_before.cartesian_state.position_m,
+                        velocity_mps=(99.0, 99.0, 99.0),
+                    )
+                }
+            )
+            return ManeuverExecution(
+                executed_epoch=result.executed_epoch,
+                actual_delta_v_j2000_mps=result.actual_delta_v_j2000_mps,
+                state_before=broken_before,
+                state_after=result.state_after,
+            )
+        if self.maneuver_violation == "runtime_advanced":
+            self._reported_epoch_override = SameScaleCalendarTimeAdapter().add_seconds(
+                result.executed_epoch,
+                1.0,
+            )
         return result
 
     def close(self) -> None:
@@ -406,6 +573,89 @@ def test_engine_emits_post_maneuver_truth_with_exact_provenance_and_chaining() -
     assert sink.truth_maneuvers[1].state_before == sink.truth_maneuvers[0].state_after
     assert sink.truth_states[-1].cartesian_state.velocity_mps == (1.0, 7_502.0, 0.0)
     assert sink.truth_states[-1] == sink.truth_maneuvers[-1].state_after
+
+
+def test_engine_executes_prestart_planned_and_closed_interval_events_only() -> None:
+    """Prestart Truth changes start state while filtered provenance remains in the Manifest."""
+    synchronization_epoch = utc("2026-07-30T00:00:00Z")
+    start = utc("2026-07-30T00:00:05Z")
+    end = utc("2026-07-30T00:00:10Z")
+
+    def planned(event_id: str, epoch: Epoch, delta_v: tuple[float, float, float]):
+        return PlannedTruthManeuver(
+            maneuver_id=event_id,
+            spacecraft_id="spacecraft-1",
+            epoch=epoch,
+            maneuver=fake_impulse(delta_v_mps=delta_v),
+        )
+
+    def command(event_id: str, epoch: Epoch, delta_v: tuple[float, float, float]):
+        return ManeuverCommand(
+            command_id=event_id,
+            spacecraft_id="spacecraft-1",
+            epoch=epoch,
+            maneuver=fake_impulse(delta_v_mps=delta_v),
+        )
+
+    request = make_fake_request(
+        planned_maneuvers=(
+            planned("planned-sync", synchronization_epoch, (1.0, 0.0, 0.0)),
+            planned("planned-prestart", utc("2026-07-30T00:00:02Z"), (2.0, 0.0, 0.0)),
+            planned("planned-start", start, (3.0, 0.0, 0.0)),
+            planned("planned-end", end, (5.0, 0.0, 0.0)),
+            planned("planned-after-end", utc("2026-07-30T00:00:11Z"), (50.0, 0.0, 0.0)),
+        ),
+        commands=(
+            command(
+                "command-prestart",
+                utc("2026-07-30T00:00:03Z"),
+                (100.0, 0.0, 0.0),
+            ),
+            command("command-start", start, (0.0, 4.0, 0.0)),
+            command("command-end", end, (0.0, 6.0, 0.0)),
+            command(
+                "command-after-end",
+                utc("2026-07-30T00:00:11Z"),
+                (0.0, 60.0, 0.0),
+            ),
+        ),
+    )
+    request = SimulationRunRequest.model_validate(
+        request.model_copy(
+            update={
+                "time_range": request.time_range.model_copy(update={"start": start, "end": end})
+            }
+        ).model_dump(mode="python")
+    )
+    engine = engine_for(fake_backend_registration(), batch_size=2)
+    manifest = engine.prepare(request)
+    sink = InMemoryOutputSink(max_records=100)
+
+    result = engine.run(manifest, sink, CancellationToken())
+
+    assert tuple(entry.event_id for entry in manifest.prepared_timeline.maneuvers) == (
+        "planned-sync",
+        "planned-prestart",
+        "command-prestart",
+        "planned-start",
+        "command-start",
+        "planned-end",
+        "command-end",
+        "planned-after-end",
+        "command-after-end",
+    )
+    assert tuple(item.maneuver_event_id for item in sink.truth_maneuvers) == (
+        "planned-sync",
+        "planned-prestart",
+        "planned-start",
+        "command-start",
+        "planned-end",
+        "command-end",
+    )
+    assert tuple(state.epoch for state in sink.truth_states) == (start, end)
+    assert sink.truth_states[0].cartesian_state.velocity_mps == (6.0, 7_504.0, 0.0)
+    assert sink.truth_states[1].cartesian_state.velocity_mps == (11.0, 7_510.0, 0.0)
+    assert result.final_epoch == end
 
 
 def test_buffers_flush_at_the_configured_limit_without_reordering() -> None:
@@ -651,6 +901,216 @@ def test_run_rejects_mismatched_backend_provenance_before_factory(
     assert exc_info.value.detail.context["mismatch"] == mismatch
     assert factory.create_calls == 0
     assert events == []
+
+
+# =============================👐Seperate👐=============================
+# Untrusted runtime contract validation
+# =============================👐Seperate👐=============================
+
+
+def test_run_rejects_invalid_initialized_epoch_before_sink_begin() -> None:
+    """The initialized runtime epoch must be an exact, revalidated Core Epoch at sync."""
+    registration, factory, events = recording_registration(
+        runtime_options={"initial_epoch_override": object()}
+    )
+    sink = RecordingSink(events)
+
+    with pytest.raises(SimulationExecutionError) as captured:
+        engine_for(registration).run(
+            engine_for(registration).prepare(make_fake_request()),
+            sink,
+            CancellationToken(),
+        )
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == "engine.execution.runtime_epoch_invalid"
+    assert factory.runtime is not None
+    assert factory.runtime.close_calls == 1
+    assert sink.abort_calls == 0
+    assert sink.commit_calls == 0
+    assert "sink.begin" not in events
+
+
+@pytest.mark.parametrize(
+    ("runtime_options", "expected_code"),
+    (
+        (
+            {"outcome_override": "REACHED_TARGET"},
+            "engine.execution.propagation_outcome_invalid",
+        ),
+        (
+            {"reach_without_propagating": True},
+            "engine.execution.propagation_epoch_invalid",
+        ),
+        (
+            {"cancel_after_target": True},
+            "engine.execution.cancellation_epoch_invalid",
+        ),
+    ),
+)
+def test_run_validates_propagation_outcome_and_safe_epoch(
+    runtime_options: dict[str, object],
+    expected_code: str,
+) -> None:
+    """Propagation results must be exact and synchronized at a valid safe point."""
+    registration, factory, events = recording_registration(runtime_options=runtime_options)
+    engine = engine_for(registration)
+    sink = RecordingSink(events)
+
+    with pytest.raises(SimulationExecutionError) as captured:
+        engine.run(engine.prepare(make_fake_request()), sink, CancellationToken())
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == expected_code
+    assert factory.runtime is not None
+    assert factory.runtime.close_calls == 1
+    assert sink.abort_calls == 1
+    assert sink.commit_calls == 0
+
+
+@pytest.mark.parametrize(
+    "violation",
+    (
+        "not_tuple",
+        "missing",
+        "duplicate",
+        "unstable_order",
+        "wrong_epoch",
+        "wrong_frame",
+        "construct_bypassed",
+        "subclass",
+    ),
+)
+def test_run_revalidates_exact_complete_truth_snapshots(violation: str) -> None:
+    """Truth snapshots are exact Core tuples covering every propagated entity in ID order."""
+    request = make_fake_request(
+        entities=(
+            fake_spacecraft(entity_id="spacecraft-b"),
+            fake_spacecraft(entity_id="spacecraft-a"),
+        )
+    )
+    registration, factory, events = recording_registration(
+        runtime_options={"truth_violation": violation}
+    )
+    engine = engine_for(registration)
+    sink = RecordingSink(events)
+
+    with pytest.raises(SimulationExecutionError) as captured:
+        engine.run(engine.prepare(request), sink, CancellationToken())
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == "engine.execution.truth_snapshot_invalid"
+    assert factory.runtime is not None
+    assert factory.runtime.close_calls == 1
+    assert sink.abort_calls == 1
+    assert sink.commit_calls == 0
+
+
+@pytest.mark.parametrize(
+    "violation",
+    (
+        "not_tuple",
+        "wrong_count",
+        "wrong_epoch",
+        "wrong_frame",
+        "construct_bypassed",
+        "subclass",
+    ),
+)
+def test_run_revalidates_exact_attitude_snapshots(violation: str) -> None:
+    """Attitude snapshots are exact Core tuples with one J2000 record per space object."""
+    request = make_fake_request(
+        entities=(
+            fake_spacecraft(entity_id="spacecraft-b"),
+            fake_spacecraft(entity_id="spacecraft-a"),
+        )
+    )
+    registration, factory, events = recording_registration(
+        runtime_options={"attitude_violation": violation}
+    )
+    engine = engine_for(registration)
+    sink = RecordingSink(events)
+
+    with pytest.raises(SimulationExecutionError) as captured:
+        engine.run(engine.prepare(request), sink, CancellationToken())
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == "engine.execution.attitude_snapshot_invalid"
+    assert factory.runtime is not None
+    assert factory.runtime.close_calls == 1
+    assert sink.abort_calls == 1
+    assert sink.commit_calls == 0
+
+
+def test_run_validates_all_same_group_samples_before_any_sink_write() -> None:
+    """A bad attitude cannot expose valid same-group Truth through a size-one buffer."""
+    registration, _, events = recording_registration(
+        runtime_options={"attitude_violation": "wrong_frame"}
+    )
+    engine = engine_for(registration, batch_size=1)
+    sink = RecordingSink(events)
+
+    with pytest.raises(SimulationExecutionError) as captured:
+        engine.run(engine.prepare(make_fake_request()), sink, CancellationToken())
+
+    assert captured.value.detail.code == "engine.execution.attitude_snapshot_invalid"
+    assert "sink.write_truth" not in events
+    assert "sink.write_attitude" not in events
+    assert sink.abort_calls == 1
+    assert sink.commit_calls == 0
+
+
+@pytest.mark.parametrize(
+    ("violation", "expected_code"),
+    (
+        ("not_dataclass", "engine.execution.maneuver_execution_invalid"),
+        ("subclass", "engine.execution.maneuver_execution_invalid"),
+        ("wrong_entity", "engine.execution.maneuver_execution_invalid"),
+        ("wrong_epoch", "engine.execution.maneuver_execution_invalid"),
+        ("wrong_frame", "engine.execution.maneuver_execution_invalid"),
+        ("broken_chain", "engine.execution.maneuver_chain_invalid"),
+        ("runtime_advanced", "engine.execution.maneuver_runtime_epoch_invalid"),
+    ),
+)
+def test_run_revalidates_maneuver_execution_and_same_epoch_chain(
+    violation: str,
+    expected_code: str,
+) -> None:
+    """Physical maneuver results are exact, targeted, J2000, chained, and epoch-stationary."""
+    registration, factory, events = recording_registration(
+        runtime_options={"maneuver_violation": violation}
+    )
+    engine = engine_for(registration)
+    sink = RecordingSink(events)
+
+    with pytest.raises(SimulationExecutionError) as captured:
+        engine.run(engine.prepare(maneuver_request()), sink, CancellationToken())
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == expected_code
+    assert factory.runtime is not None
+    assert factory.runtime.close_calls == 1
+    assert sink.abort_calls == 1
+    assert sink.commit_calls == 0
+
+
+def test_completed_result_is_validated_before_sink_commit() -> None:
+    """A runtime that corrupts its final epoch after output cannot commit."""
+    registration, factory, events = recording_registration(
+        runtime_options={"corrupt_final_epoch_after_truth": True}
+    )
+    engine = engine_for(registration)
+    sink = RecordingSink(events)
+
+    with pytest.raises(SimulationExecutionError) as captured:
+        engine.run(engine.prepare(make_fake_request()), sink, CancellationToken())
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == "engine.execution.final_epoch_invalid"
+    assert factory.runtime is not None
+    assert factory.runtime.close_calls == 1
+    assert sink.abort_calls == 1
+    assert sink.commit_calls == 0
 
 
 # =============================👐Seperate👐=============================

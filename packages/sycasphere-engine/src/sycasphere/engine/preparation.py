@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-31
 最后修改  : 2026-07-31
-版本号    : v1.1.0
+版本号    : v1.2.0
 
 ■ 用途说明:
   将完整仿真请求准备为不含运行状态和后端对象的不可变执行清单。
@@ -23,11 +23,13 @@
   ✓ 通过同一后端时间适配器校验和排序全部运行消费时刻
   ✓ 保持同刻 PLANNED、COMMAND 和源元组位置的稳定顺序
   ✓ 准备期不创建科学后端 runtime
+  ✓ 校验通用后端能力、确定性声明并隔离未知插件异常
 
 ■ 待办事项:
   - 无
 
 ■ 更新日志:
+  v1.2.0 (2026-07-31): 加固插件清单、通用能力、确定性和异常边界。
   v1.1.0 (2026-07-31): 校验全部运行消费 Epoch 后再构造时间线
   v1.0.0 (2026-07-31): 创建 Manifest 准备服务
 
@@ -50,6 +52,7 @@ from sycasphere.core import (
     OtherSpaceObjectDefinition,
     OutputProduct,
     OutputRequirement,
+    PluginManifest,
     PreparedManeuverEntry,
     PreparedManeuverSource,
     PreparedTimeline,
@@ -108,6 +111,18 @@ def _raise_scope_error(
             message=message,
             component_ref=_COMPONENT_REF,
             context={} if context is None else context,
+        )
+    )
+
+
+def _raise_internal_preparation_error() -> NoReturn:
+    """Raise one sanitized boundary error for an unknown plugin implementation failure."""
+    raise SimulationPreparationError(
+        make_error_detail(
+            category=ErrorCategory.INTERNAL_ERROR,
+            code="engine.preparation.internal_error",
+            message="Simulation preparation failed.",
+            component_ref=_COMPONENT_REF,
         )
     )
 
@@ -206,6 +221,60 @@ def _validate_v01_scope(request: SimulationRunRequest) -> None:
                     "source_id": source_id,
                 },
             )
+
+
+def _snapshot_plugin_manifest(manifest: object) -> PluginManifest:
+    """Revalidate one registration-owned data manifest before trusting its declarations."""
+    try:
+        if type(manifest) is not PluginManifest:
+            raise TypeError("registration manifest must be an exact PluginManifest")
+        return PluginManifest.model_validate(manifest.model_dump(mode="python"))
+    except Exception:
+        raise SimulationPreparationError(
+            make_error_detail(
+                category=ErrorCategory.PLUGIN_INCOMPATIBLE,
+                code="engine.backend_manifest_invalid",
+                message="Science backend plugin manifest failed compatibility validation.",
+                component_ref=_COMPONENT_REF,
+                context={"validation_stage": "plugin_manifest"},
+            )
+        ) from None
+
+
+def _required_backend_capabilities(request: SimulationRunRequest) -> frozenset[str]:
+    """Derive only Engine-owned generic capabilities from one validated request."""
+    required = {
+        "frame.j2000",
+        "output.truth",
+        "time.same-scale",
+    }
+    if OutputRequirement.ATTITUDE in request.output_requirements:
+        required.add("output.attitude")
+    if request.simulation_definition.planned_maneuvers or request.command_timeline:
+        required.add("maneuver.impulsive.j2000")
+    return frozenset(required)
+
+
+def _validate_backend_capabilities(
+    request: SimulationRunRequest,
+    manifest: PluginManifest,
+) -> None:
+    """Require deterministic execution and every Engine-owned generic capability."""
+    missing = sorted(_required_backend_capabilities(request) - manifest.capabilities)
+    if missing:
+        _raise_scope_error(
+            category=ErrorCategory.PLUGIN_INCOMPATIBLE,
+            code="engine.backend_capabilities_missing",
+            message="Science backend does not declare all required Engine capabilities.",
+            context={"missing_capabilities": missing},
+        )
+    if manifest.deterministic is not True:
+        _raise_scope_error(
+            category=ErrorCategory.PLUGIN_INCOMPATIBLE,
+            code="engine.backend_nondeterministic",
+            message="Engine v0.1 requires a deterministic science backend.",
+            context={"required_deterministic": True},
+        )
 
 
 def _candidate_order(
@@ -325,7 +394,7 @@ class ManifestPreparer:
             validated_request = SimulationRunRequest.model_validate(
                 request.model_dump(mode="python")
             )
-        except ValueError as error:
+        except (AttributeError, TypeError, ValueError):
             raise SimulationPreparationError(
                 make_error_detail(
                     category=ErrorCategory.VALIDATION_ERROR,
@@ -334,11 +403,13 @@ class ManifestPreparer:
                     component_ref=_COMPONENT_REF,
                     context={"validation_stage": "simulation_run_request"},
                 )
-            ) from error
+            ) from None
         try:
             ## -------------- step: resolve before Engine and plugin compatibility ---------
             registration = self._registry.resolve(validated_request.backend.ref)
+            backend_manifest = _snapshot_plugin_manifest(registration.manifest)
             _validate_v01_scope(validated_request)
+            _validate_backend_capabilities(validated_request, backend_manifest)
             registration.configuration_validator.validate(validated_request)
 
             ## -------------- step: lock ordered timeline and resolved provenance ---------
@@ -350,14 +421,20 @@ class ManifestPreparer:
                 validated_request,
                 registration.time_adapter,
             )
+        except SimulationPreparationError:
+            raise
+        except Exception:
+            _raise_internal_preparation_error()
+
+        try:
             return SimulationExecutionManifest.create(
                 schema_version=validated_request.schema_version,
                 source_request=validated_request,
                 resolved_plugins=(
                     ResolvedPluginRecord.create(
                         component_id="science-backend",
-                        kind=registration.manifest.kind,
-                        ref=registration.manifest.ref,
+                        kind=backend_manifest.kind,
+                        ref=backend_manifest.ref,
                         configuration=validated_request.backend.configuration,
                     ),
                 ),
@@ -371,7 +448,9 @@ class ManifestPreparer:
                     output_sampling=validated_request.output_sampling,
                 ),
             )
-        except ValueError as error:
+        except SimulationPreparationError:
+            raise
+        except (AttributeError, TypeError, ValueError):
             raise SimulationPreparationError(
                 make_error_detail(
                     category=ErrorCategory.VALIDATION_ERROR,
@@ -380,7 +459,9 @@ class ManifestPreparer:
                     component_ref=_COMPONENT_REF,
                     context={"validation_stage": "manifest_preparation"},
                 )
-            ) from error
+            ) from None
+        except Exception:
+            _raise_internal_preparation_error()
 
 
 __all__ = ["ManifestPreparer"]
