@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-30
 最后修改  : 2026-07-30
-版本号    : v1.0.0
+版本号    : v1.0.1
 
 ■ 用途说明:
   提供后端中立的同时间尺度日历运算、闭区间惰性采样和确定性事件合并。
@@ -26,6 +26,7 @@
   - 无
 
 ■ 更新日志:
+  v1.0.1 (2026-07-30): 修复前导小数零精度并在首次产出前拒绝时间不兼容。
   v1.0.0 (2026-07-30): 初始版本。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -81,11 +82,12 @@ def _raise_time_error(
     code: str,
     message: str,
     context: dict[str, str] | None = None,
+    category: ErrorCategory = ErrorCategory.VALIDATION_ERROR,
 ) -> NoReturn:
     """Raise one safe, structured preparation-time incompatibility."""
     raise SimulationPreparationError(
         make_error_detail(
-            category=ErrorCategory.VALIDATION_ERROR,
+            category=category,
             code=code,
             message=message,
             component_ref=_COMPONENT_REF,
@@ -100,6 +102,7 @@ def _require_same_scale(left: Epoch, right: Epoch) -> None:
         _raise_time_error(
             code="ENGINE_TIME_SCALE_MISMATCH",
             message="same-scale calendar arithmetic cannot compare different time scales",
+            category=ErrorCategory.PLUGIN_INCOMPATIBLE,
             context={
                 "left_time_scale": left.time_scale.value,
                 "right_time_scale": right.time_scale.value,
@@ -120,6 +123,7 @@ def _parse_calendar(epoch: Epoch) -> _CalendarMoment:
         _raise_time_error(
             code="ENGINE_TIME_LEAP_SECOND_UNSUPPORTED",
             message="same-scale calendar arithmetic does not support a UTC leap second",
+            category=ErrorCategory.PLUGIN_INCOMPATIBLE,
             context={"epoch": epoch.value, "time_scale": epoch.time_scale.value},
         )
 
@@ -135,8 +139,13 @@ def _parse_calendar(epoch: Epoch) -> _CalendarMoment:
 
 def _decimal_precision(*values: Decimal, integer_digits: int = 1) -> int:
     """Return sufficient local precision for exact finite additions and subtractions."""
-    decimal_digits = max((len(value.as_tuple().digits) for value in values), default=1)
-    return max(28, decimal_digits + integer_digits + 2)
+    coefficient_digits = max((len(value.as_tuple().digits) for value in values), default=1)
+    fractional_places = 0
+    for value in values:
+        exponent = value.as_tuple().exponent
+        if isinstance(exponent, int):
+            fractional_places = max(fractional_places, -exponent)
+    return max(28, coefficient_digits, integer_digits + fractional_places) + 2
 
 
 def _serialize_calendar(moment: _CalendarMoment, time_scale: TimeScale) -> Epoch:
@@ -270,6 +279,8 @@ def iter_sampling_epochs(
     time_adapter: PreparationTimeAdapter,
 ) -> Iterator[Epoch]:
     """Yield a lazy closed-interval cadence, forcing the end exactly once."""
+    ## -------------- step: validate both boundaries before exposing the start ---------
+    time_adapter.compare(time_range.start, time_range.end)
     current = time_range.start
     yield current
 
@@ -311,6 +322,8 @@ def iter_event_groups(
 ) -> Iterator[ScheduledEventGroup]:
     """Lazily merge one look-ahead per sampler with one prepared-maneuver cursor."""
     time_range = manifest.source_request.time_range
+    ## -------------- step: validate even a manifest with no scheduled events ---------
+    time_adapter.compare(time_range.start, time_range.end)
     rules = tuple(
         sorted(
             manifest.prepared_timeline.output_sampling.rules,

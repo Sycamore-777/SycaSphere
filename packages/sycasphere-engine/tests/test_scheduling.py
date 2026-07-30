@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-30
 最后修改  : 2026-07-30
-版本号    : v1.0.0
+版本号    : v1.0.1
 
 ■ 用途说明:
   验证 Engine 同时间尺度日历运算、闭区间惰性采样和确定性事件合并。
@@ -25,6 +25,7 @@
   - 无
 
 ■ 更新日志:
+  v1.0.1 (2026-07-30): 增加前导小数零、预产出校验和不兼容类别回归覆盖。
   v1.0.0 (2026-07-30): 初始版本。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -32,11 +33,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from itertools import islice
 
 import pytest
 from sycasphere.core import (
     Epoch,
+    ErrorCategory,
     FrameKind,
     FrameRef,
     ImpulsiveManeuverSpec,
@@ -136,6 +139,31 @@ class StagnantTimeAdapter(SameScaleCalendarTimeAdapter):
         return epoch
 
 
+_UNSUPPORTED_TIME_RANGES = (
+    (
+        SimulationTimeRange(
+            start=utc("2026-07-30T00:00:00Z"),
+            end=tai("2026-07-30T00:00:37"),
+        ),
+        "ENGINE_TIME_SCALE_MISMATCH",
+    ),
+    (
+        SimulationTimeRange(
+            start=utc("2016-12-31T23:59:60Z"),
+            end=utc("2017-01-01T00:00:01Z"),
+        ),
+        "ENGINE_TIME_LEAP_SECOND_UNSUPPORTED",
+    ),
+    (
+        SimulationTimeRange(
+            start=utc("2016-12-31T23:59:58Z"),
+            end=utc("2016-12-31T23:59:60Z"),
+        ),
+        "ENGINE_TIME_LEAP_SECOND_UNSUPPORTED",
+    ),
+)
+
+
 # =============================👐Seperate👐=============================
 # Same-scale time arithmetic
 # =============================👐Seperate👐=============================
@@ -180,28 +208,104 @@ def test_time_adapter_preserves_long_decimal_fraction_through_carry() -> None:
     ) == tt("2026-07-30T00:00:01.92345678901234567890123456789")
 
 
-def test_time_adapter_rejects_cross_scale_and_utc_leap_second() -> None:
+def test_time_adapter_preserves_leading_fractional_zeros_and_inverse_consistency() -> None:
     adapter = SameScaleCalendarTimeAdapter()
-    with pytest.raises(SimulationPreparationError, match="time scale"):
-        adapter.compare(utc("2026-07-30T00:00:00Z"), tai("2026-07-30T00:00:37"))
-    with pytest.raises(SimulationPreparationError, match="leap second"):
-        adapter.add_seconds(utc("2016-12-31T23:59:60Z"), 1.0)
+    start = tt("2026-07-30T00:00:00.000000000000000000000000000001")
+    expected = tt("2026-07-30T00:00:00.100000000000000000000000000001")
+
+    assert adapter.add_seconds(start, 0.1) == expected
+    difference = adapter.seconds_between(start, expected)
+    assert difference == 0.1
+    assert adapter.add_seconds(start, difference) == expected
+
+
+@pytest.mark.parametrize(
+    "operation",
+    (
+        lambda adapter: adapter.compare(
+            utc("2026-07-30T00:00:00Z"),
+            tai("2026-07-30T00:00:37"),
+        ),
+        lambda adapter: adapter.seconds_between(
+            utc("2026-07-30T00:00:00Z"),
+            tai("2026-07-30T00:00:37"),
+        ),
+        lambda adapter: adapter.same_instant(
+            utc("2026-07-30T00:00:00Z"),
+            tai("2026-07-30T00:00:37"),
+        ),
+    ),
+)
+def test_time_adapter_rejects_cross_scale_as_plugin_incompatible(
+    operation: Callable[[SameScaleCalendarTimeAdapter], object],
+) -> None:
+    adapter = SameScaleCalendarTimeAdapter()
+
+    with pytest.raises(SimulationPreparationError, match="time scale") as captured:
+        operation(adapter)
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == "ENGINE_TIME_SCALE_MISMATCH"
+
+
+@pytest.mark.parametrize(
+    "operation",
+    (
+        lambda adapter: adapter.add_seconds(utc("2016-12-31T23:59:60Z"), 1.0),
+        lambda adapter: adapter.compare(
+            utc("2016-12-31T23:59:60Z"),
+            utc("2017-01-01T00:00:00Z"),
+        ),
+        lambda adapter: adapter.seconds_between(
+            utc("2016-12-31T23:59:59Z"),
+            utc("2016-12-31T23:59:60Z"),
+        ),
+        lambda adapter: adapter.same_instant(
+            utc("2016-12-31T23:59:60Z"),
+            utc("2016-12-31T23:59:60Z"),
+        ),
+    ),
+)
+def test_time_adapter_rejects_utc_leap_second_as_plugin_incompatible(
+    operation: Callable[[SameScaleCalendarTimeAdapter], object],
+) -> None:
+    adapter = SameScaleCalendarTimeAdapter()
+
+    with pytest.raises(SimulationPreparationError, match="leap second") as captured:
+        operation(adapter)
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == "ENGINE_TIME_LEAP_SECOND_UNSUPPORTED"
 
 
 @pytest.mark.parametrize("seconds", (float("nan"), float("inf"), float("-inf")))
 def test_time_adapter_rejects_non_finite_offsets(seconds: float) -> None:
     adapter = SameScaleCalendarTimeAdapter()
 
-    with pytest.raises(SimulationPreparationError, match="finite"):
+    with pytest.raises(SimulationPreparationError, match="finite") as captured:
         adapter.add_seconds(utc("2026-07-30T00:00:00Z"), seconds)
 
+    assert captured.value.detail.category is ErrorCategory.VALIDATION_ERROR
+    assert captured.value.detail.code == "ENGINE_TIME_OFFSET_INVALID"
 
-def test_time_adapter_reports_calendar_range_overflow_as_structured_error() -> None:
+
+@pytest.mark.parametrize(
+    ("epoch", "seconds"),
+    (
+        (utc("9999-12-31T23:59:59Z"), 1.0),
+        (utc("0001-01-01T00:00:00Z"), -0.1),
+    ),
+)
+def test_time_adapter_reports_calendar_range_overflow_as_structured_error(
+    epoch: Epoch,
+    seconds: float,
+) -> None:
     adapter = SameScaleCalendarTimeAdapter()
 
     with pytest.raises(SimulationPreparationError, match="calendar range") as captured:
-        adapter.add_seconds(utc("9999-12-31T23:59:59Z"), 1.0)
+        adapter.add_seconds(epoch, seconds)
 
+    assert captured.value.detail.category is ErrorCategory.VALIDATION_ERROR
     assert captured.value.detail.code == "ENGINE_TIME_CALENDAR_RANGE"
 
 
@@ -268,6 +372,23 @@ def test_sampling_rejects_an_adapter_that_does_not_advance() -> None:
 
     with pytest.raises(SimulationPreparationError, match="advance"):
         tuple(iter_sampling_epochs(time_range, rule, StagnantTimeAdapter()))
+
+
+@pytest.mark.parametrize(
+    ("time_range", "expected_code"),
+    _UNSUPPORTED_TIME_RANGES,
+)
+def test_sampling_validates_unsupported_range_before_first_yield(
+    time_range: SimulationTimeRange,
+    expected_code: str,
+) -> None:
+    rule = SamplingRule(product=OutputProduct.TRUTH_STATE, interval_s=1.0)
+
+    with pytest.raises(SimulationPreparationError) as captured:
+        next(iter_sampling_epochs(time_range, rule, SameScaleCalendarTimeAdapter()))
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == expected_code
 
 
 # =============================👐Seperate👐=============================
@@ -343,3 +464,20 @@ def test_event_merge_keeps_only_one_sampling_lookahead_per_rule() -> None:
         OutputProduct.TRUTH_STATE,
     )
     assert adapter.add_calls == 2
+
+
+@pytest.mark.parametrize(
+    ("time_range", "expected_code"),
+    _UNSUPPORTED_TIME_RANGES,
+)
+def test_empty_event_merge_validates_unsupported_range(
+    time_range: SimulationTimeRange,
+    expected_code: str,
+) -> None:
+    manifest = minimal_manifest(time_range=time_range, rules=(), maneuvers=())
+
+    with pytest.raises(SimulationPreparationError) as captured:
+        next(iter_event_groups(manifest, SameScaleCalendarTimeAdapter()))
+
+    assert captured.value.detail.category is ErrorCategory.PLUGIN_INCOMPATIBLE
+    assert captured.value.detail.code == expected_code
