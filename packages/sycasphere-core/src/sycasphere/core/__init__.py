@@ -6,8 +6,8 @@
 文件名    : __init__.py
 创建者    : Sycamore
 创建日期  : 2026-07-20
-最后修改  : 2026-07-28
-版本号    : v1.3.0
+最后修改  : 2026-07-30
+版本号    : v1.4.0
 
 ■ 用途说明:
   提供 SycaSphere Core 纯领域契约包的公共版本、仿真输入、Truth、Observation 和 Delivery 契约。
@@ -70,6 +70,11 @@ from sycasphere.core.execution import (
     ScienceBackendBinding,
     SimulationExecutionManifest,
     SimulationRunRequest,
+)
+from sycasphere.core.execution_results import (
+    SimulationExecutionResult,
+    SimulationExecutionStatus,
+    SimulationOutputSummary,
 )
 from sycasphere.core.frames import (
     CoordinateRepresentation,
@@ -199,6 +204,9 @@ __all__ = [
     "SensorType",
     "SimulationDefinition",
     "SimulationExecutionManifest",
+    "SimulationExecutionResult",
+    "SimulationExecutionStatus",
+    "SimulationOutputSummary",
     "SimulationRunRequest",
     "SimulationTimeRange",
     "SpaceObjectPhysicalProperties",

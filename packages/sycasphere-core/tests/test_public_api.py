@@ -6,8 +6,8 @@
 文件名    : test_public_api.py
 创建者    : Sycamore
 创建日期  : 2026-07-20
-最后修改  : 2026-07-28
-版本号    : v1.2.0
+最后修改  : 2026-07-30
+版本号    : v1.3.0
 
 ■ 用途说明:
   锁定 SycaSphere Core 的公开导入契约和 Pydantic 模式。
@@ -111,6 +111,9 @@ EXPECTED_PUBLIC_CONTRACTS = {
     "SensorType",
     "SimulationDefinition",
     "SimulationExecutionManifest",
+    "SimulationExecutionResult",
+    "SimulationExecutionStatus",
+    "SimulationOutputSummary",
     "SimulationRunRequest",
     "SimulationTimeRange",
     "SpaceObjectPhysicalProperties",
@@ -125,7 +128,7 @@ EXPECTED_PUBLIC_CONTRACTS = {
 
 
 def test_public_contract_exports_are_exact() -> None:
-    """Only approved Task 2-6 Core contract names may be exported through ``__all__``."""
+    """Only approved Task 1-6 Core contract names may be exported through ``__all__``."""
     assert set(core.__all__) == EXPECTED_PUBLIC_CONTRACTS
 
 
@@ -177,6 +180,8 @@ def _public_model_schemas() -> dict[str, dict[str, Any]]:
         core.PreparedManeuverEntry,
         core.PreparedTimeline,
         core.SimulationExecutionManifest,
+        core.SimulationOutputSummary,
+        core.SimulationExecutionResult,
         core.AttitudeState,
         core.TruthState,
         core.TruthManeuver,

@@ -11260,6 +11260,241 @@
     "title": "SimulationExecutionManifest",
     "type": "object"
   },
+  "SimulationExecutionResult": {
+    "$defs": {
+      "Epoch": {
+        "additionalProperties": false,
+        "description": "An immutable calendar instant whose time scale is always explicit.",
+        "properties": {
+          "time_scale": {
+            "$ref": "#/$defs/TimeScale"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "time_scale"
+        ],
+        "title": "Epoch",
+        "type": "object"
+      },
+      "ErrorCategory": {
+        "description": "Stable categories for public SycaSphere error payloads.",
+        "enum": [
+          "VALIDATION_ERROR",
+          "PLUGIN_MISSING",
+          "PLUGIN_INCOMPATIBLE",
+          "BACKEND_INITIALIZATION",
+          "EXTERNAL_DATA",
+          "UNSUPPORTED_FRAME",
+          "UNSUPPORTED_MEASUREMENT",
+          "UNAUTHORIZED_DATA_ACCESS",
+          "OUT_OF_ORDER",
+          "NUMERICAL_FAILURE",
+          "RESOURCE_EXHAUSTED",
+          "TIMEOUT",
+          "CANCELLED",
+          "INTERNAL_ERROR"
+        ],
+        "title": "ErrorCategory",
+        "type": "string"
+      },
+      "ErrorDetail": {
+        "additionalProperties": false,
+        "description": "An immutable, JSON-safe payload for errors crossing public boundaries.",
+        "properties": {
+          "attempt_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/NonBlankReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "category": {
+            "$ref": "#/$defs/ErrorCategory"
+          },
+          "code": {
+            "$ref": "#/$defs/MachineIdentifier"
+          },
+          "component_ref": {
+            "$ref": "#/$defs/MachineIdentifier"
+          },
+          "context": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Context",
+            "type": "object"
+          },
+          "diagnostic_artifact_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/NonBlankReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/NonBlankReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "category",
+          "code",
+          "message",
+          "retryable",
+          "component_ref",
+          "context"
+        ],
+        "title": "ErrorDetail",
+        "type": "object"
+      },
+      "JsonValue": {},
+      "MachineIdentifier": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._:/-]*[A-Za-z0-9])?$",
+        "type": "string"
+      },
+      "NonBlankReference": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "Sha256Hex": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "SimulationExecutionStatus": {
+        "description": "Terminal outcome of a simulation execution with no execution failure result.",
+        "enum": [
+          "COMPLETED",
+          "CANCELLED"
+        ],
+        "title": "SimulationExecutionStatus",
+        "type": "string"
+      },
+      "SimulationOutputSummary": {
+        "additionalProperties": false,
+        "description": "Counts of committed truth, attitude, and maneuver output records.",
+        "properties": {
+          "attitude_state_count": {
+            "$ref": "#/$defs/StrictNonNegativeInt",
+            "default": 0
+          },
+          "truth_maneuver_count": {
+            "$ref": "#/$defs/StrictNonNegativeInt",
+            "default": 0
+          },
+          "truth_state_count": {
+            "$ref": "#/$defs/StrictNonNegativeInt",
+            "default": 0
+          }
+        },
+        "title": "SimulationOutputSummary",
+        "type": "object"
+      },
+      "StrictNonNegativeInt": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "TimeScale": {
+        "description": "Supported labels for an Epoch's declared time scale.",
+        "enum": [
+          "UTC",
+          "TAI",
+          "TT"
+        ],
+        "title": "TimeScale",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "description": "Immutable terminal result of one completed or cancelled simulation execution.",
+    "properties": {
+      "final_epoch": {
+        "$ref": "#/$defs/Epoch"
+      },
+      "manifest_content_hash": {
+        "$ref": "#/$defs/Sha256Hex"
+      },
+      "output_summary": {
+        "$ref": "#/$defs/SimulationOutputSummary"
+      },
+      "status": {
+        "$ref": "#/$defs/SimulationExecutionStatus"
+      },
+      "termination_detail": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ErrorDetail"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "manifest_content_hash",
+      "status",
+      "final_epoch",
+      "output_summary"
+    ],
+    "title": "SimulationExecutionResult",
+    "type": "object"
+  },
+  "SimulationOutputSummary": {
+    "$defs": {
+      "StrictNonNegativeInt": {
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "additionalProperties": false,
+    "description": "Counts of committed truth, attitude, and maneuver output records.",
+    "properties": {
+      "attitude_state_count": {
+        "$ref": "#/$defs/StrictNonNegativeInt",
+        "default": 0
+      },
+      "truth_maneuver_count": {
+        "$ref": "#/$defs/StrictNonNegativeInt",
+        "default": 0
+      },
+      "truth_state_count": {
+        "$ref": "#/$defs/StrictNonNegativeInt",
+        "default": 0
+      }
+    },
+    "title": "SimulationOutputSummary",
+    "type": "object"
+  },
   "SimulationRunRequest": {
     "$defs": {
       "CartesianState": {

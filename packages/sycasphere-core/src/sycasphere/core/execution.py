@@ -6,8 +6,8 @@
 文件名    : execution.py
 创建者    : Sycamore
 创建日期  : 2026-07-26
-最后修改  : 2026-07-29
-版本号    : v1.4.0
+最后修改  : 2026-07-30
+版本号    : v1.5.0
 
 ■ 用途说明:
   定义独立仿真引擎可直接验证、准备和执行的自包含不可变科学输入边界。
@@ -369,6 +369,23 @@ class ResolvedPluginRecord(BaseModel):
     kind: PluginKind
     ref: PluginRef
     configuration_hash: Sha256Hex
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        component_id: str,
+        kind: PluginKind,
+        ref: PluginRef,
+        configuration: Mapping[str, JsonValue],
+    ) -> ResolvedPluginRecord:
+        """Create a resolved record with a canonical hash of its configuration."""
+        return cls(
+            component_id=component_id,
+            kind=kind,
+            ref=ref,
+            configuration_hash=sha256_canonical_json(dict(configuration)),
+        )
 
 
 class DerivedRandomStream(BaseModel):

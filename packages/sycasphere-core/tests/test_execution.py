@@ -6,8 +6,8 @@
 文件名    : test_execution.py
 创建者    : Sycamore
 创建日期  : 2026-07-26
-最后修改  : 2026-07-29
-版本号    : v1.4.0
+最后修改  : 2026-07-30
+版本号    : v1.5.0
 
 ■ 用途说明:
   验证自包含仿真运行请求及不可变执行清单的确定性、完整性和边界一致性约束。
@@ -1474,3 +1474,19 @@ def test_shared_boundary_helpers_snapshot_models_and_reject_numeric_coercion() -
         require_builtin_float_sequence((1, 2.0), "values")
     with pytest.raises(ValueError, match="list or tuple"):
         require_builtin_float_sequence("1.0,2.0", "values")
+
+
+def test_resolved_plugin_factory_hashes_canonical_configuration() -> None:
+    record_a = ResolvedPluginRecord.create(
+        component_id="science-backend",
+        kind=PluginKind.SCIENCE_BACKEND,
+        ref=make_request().backend.ref,
+        configuration={"b": -0.0, "a": [1, True]},
+    )
+    record_b = ResolvedPluginRecord.create(
+        component_id="science-backend",
+        kind=PluginKind.SCIENCE_BACKEND,
+        ref=make_request().backend.ref,
+        configuration={"a": [1, True], "b": 0.0},
+    )
+    assert record_a.configuration_hash == record_b.configuration_hash
