@@ -181,6 +181,29 @@ def test_registry_is_not_mutable_after_construction(
         registry.registrations = ()
 
 
+def test_registry_mapping_rejects_item_assignment_and_preserves_order(
+    fake_registration: ScienceBackendRegistration,
+) -> None:
+    """The exposed mapping remains read-only and retains explicit insertion order."""
+    second_registration = replace(
+        fake_registration,
+        manifest=fake_registration.manifest.model_copy(
+            update={
+                "ref": PluginRef(
+                    plugin_id="sycasphere.testing.second-stub",
+                    implementation_version="0.1.0",
+                    interface_version=SchemaVersion(major=1, minor=0),
+                )
+            }
+        ),
+    )
+    registry = PluginRegistry((fake_registration, second_registration))
+
+    assert tuple(registry.registrations.values()) == (fake_registration, second_registration)
+    with pytest.raises(TypeError):
+        registry.registrations[fake_registration.manifest.ref] = fake_registration  # type: ignore[index]
+
+
 def test_registry_reports_missing_exact_ref_as_structured_preparation_error(
     fake_registration: ScienceBackendRegistration,
 ) -> None:
@@ -239,6 +262,50 @@ def test_maneuver_execution_rejects_non_finite_or_non_float_delta_v() -> None:
         ManeuverExecution(
             executed_epoch=epoch,
             actual_delta_v_j2000_mps=(0.0, 0.0, float("nan")),
+            state_before=state,
+            state_after=state,
+        )
+
+
+def test_maneuver_execution_rejects_mutable_delta_v_list() -> None:
+    """A frozen public value object must not retain a caller-owned mutable vector."""
+    epoch = Epoch(value="2026-07-30T00:00:00Z", time_scale=TimeScale.UTC)
+    state = _truth_state("spacecraft.alpha", epoch)
+
+    with pytest.raises(ValueError, match="actual delta-v must be a tuple"):
+        ManeuverExecution(
+            executed_epoch=epoch,
+            actual_delta_v_j2000_mps=[0.0, 0.0, 1.0],  # type: ignore[arg-type]
+            state_before=state,
+            state_after=state,
+        )
+
+
+def test_maneuver_execution_rejects_wrong_length_delta_v_tuple() -> None:
+    """A backend result must expose exactly three delta-v components."""
+    epoch = Epoch(value="2026-07-30T00:00:00Z", time_scale=TimeScale.UTC)
+    state = _truth_state("spacecraft.alpha", epoch)
+
+    with pytest.raises(ValueError, match="actual delta-v must contain three components"):
+        ManeuverExecution(
+            executed_epoch=epoch,
+            actual_delta_v_j2000_mps=(0.0, 1.0),  # type: ignore[arg-type]
+            state_before=state,
+            state_after=state,
+        )
+
+
+def test_maneuver_execution_rejects_integer_delta_v_component() -> None:
+    """A backend result rejects integer components at the strict float boundary."""
+    epoch = Epoch(value="2026-07-30T00:00:00Z", time_scale=TimeScale.UTC)
+    state = _truth_state("spacecraft.alpha", epoch)
+
+    with pytest.raises(
+        ValueError, match="actual delta-v components must be finite built-in floats"
+    ):
+        ManeuverExecution(
+            executed_epoch=epoch,
+            actual_delta_v_j2000_mps=(0.0, 0.0, 1),  # type: ignore[arg-type]
             state_before=state,
             state_after=state,
         )

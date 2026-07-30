@@ -103,6 +103,8 @@ class ManeuverExecution:
             raise ValueError("state_before epoch must equal executed_epoch")
         if self.state_after.epoch != self.executed_epoch:
             raise ValueError("state_after epoch must equal executed_epoch")
+        if not isinstance(self.actual_delta_v_j2000_mps, tuple):
+            raise ValueError("actual delta-v must be a tuple")
         if len(self.actual_delta_v_j2000_mps) != 3:
             raise ValueError("actual delta-v must contain three components")
         if any(
