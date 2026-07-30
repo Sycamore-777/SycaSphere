@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-30
 最后修改  : 2026-07-31
-版本号    : v1.1.0
+版本号    : v1.2.0
 
 ■ 用途说明:
   验证公共 SimulationEngine 的批运行、取消、错误清理和确定性语义。
@@ -22,11 +22,13 @@
   ✓ 覆盖三通道批缓冲和批大小不变性
   ✓ 覆盖运行前、传播中和提交前取消
   ✓ 覆盖 factory、runtime 与 sink 故障清理
+  ✓ 覆盖多航天器同历元交错机动的逐实体状态连续性
 
 ■ 待办事项:
   - 无
 
 ■ 更新日志:
+  v1.2.0 (2026-07-31): 增加多航天器交错机动链隔离回归覆盖。
   v1.1.0 (2026-07-31): 增加区间筛选和第三方 runtime 契约加固回归覆盖。
   v1.0.0 (2026-07-30): 初始版本。
 
@@ -503,6 +505,54 @@ def maneuver_request() -> SimulationRunRequest:
     )
 
 
+def interleaved_maneuver_request() -> SimulationRunRequest:
+    """Build A1, B1, A2, B2 impulses at one shared final epoch."""
+    epoch = utc("2026-07-30T00:00:10Z")
+    return make_fake_request(
+        entities=(
+            fake_spacecraft(
+                entity_id="spacecraft-a",
+                position_m=(7_000_000.0, 0.0, 0.0),
+                velocity_mps=(0.0, 7_500.0, 0.0),
+            ),
+            fake_spacecraft(
+                entity_id="spacecraft-b",
+                position_m=(7_100_000.0, 0.0, 0.0),
+                velocity_mps=(0.0, 7_600.0, 0.0),
+            ),
+        ),
+        planned_maneuvers=(
+            PlannedTruthManeuver(
+                maneuver_id="a1",
+                spacecraft_id="spacecraft-a",
+                epoch=epoch,
+                maneuver=fake_impulse(delta_v_mps=(1.0, 0.0, 0.0)),
+            ),
+            PlannedTruthManeuver(
+                maneuver_id="b1",
+                spacecraft_id="spacecraft-b",
+                epoch=epoch,
+                maneuver=fake_impulse(delta_v_mps=(0.0, 1.0, 0.0)),
+            ),
+        ),
+        commands=(
+            ManeuverCommand(
+                command_id="a2",
+                spacecraft_id="spacecraft-a",
+                epoch=epoch,
+                maneuver=fake_impulse(delta_v_mps=(2.0, 0.0, 0.0)),
+            ),
+            ManeuverCommand(
+                command_id="b2",
+                spacecraft_id="spacecraft-b",
+                epoch=epoch,
+                maneuver=fake_impulse(delta_v_mps=(0.0, 2.0, 0.0)),
+            ),
+        ),
+        include_attitude=False,
+    )
+
+
 def serialized_records(
     sink: InMemoryOutputSink,
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
@@ -573,6 +623,35 @@ def test_engine_emits_post_maneuver_truth_with_exact_provenance_and_chaining() -
     assert sink.truth_maneuvers[1].state_before == sink.truth_maneuvers[0].state_after
     assert sink.truth_states[-1].cartesian_state.velocity_mps == (1.0, 7_502.0, 0.0)
     assert sink.truth_states[-1] == sink.truth_maneuvers[-1].state_after
+
+
+def test_engine_isolates_interleaved_same_epoch_maneuver_chains_by_entity() -> None:
+    """A1, B1, A2, B2 remain ordered while A and B chain independently."""
+    engine = engine_for(fake_backend_registration(), batch_size=2)
+    sink = InMemoryOutputSink(max_records=100)
+
+    result = engine.run(
+        engine.prepare(interleaved_maneuver_request()),
+        sink,
+        CancellationToken(),
+    )
+
+    maneuvers = sink.truth_maneuvers
+    assert result.status is SimulationExecutionStatus.COMPLETED
+    assert result.output_summary.truth_maneuver_count == 4
+    assert tuple(item.maneuver_event_id for item in maneuvers) == ("a1", "b1", "a2", "b2")
+    assert tuple(item.entity_id for item in maneuvers) == (
+        "spacecraft-a",
+        "spacecraft-b",
+        "spacecraft-a",
+        "spacecraft-b",
+    )
+    assert maneuvers[0].state_after != maneuvers[1].state_before
+    assert maneuvers[2].state_before == maneuvers[0].state_after
+    assert maneuvers[3].state_before == maneuvers[1].state_after
+    final_truth = {item.entity_id: item for item in sink.truth_states[-2:]}
+    assert final_truth["spacecraft-a"].cartesian_state.velocity_mps == (3.0, 7_500.0, 0.0)
+    assert final_truth["spacecraft-b"].cartesian_state.velocity_mps == (0.0, 7_603.0, 0.0)
 
 
 def test_engine_executes_prestart_planned_and_closed_interval_events_only() -> None:

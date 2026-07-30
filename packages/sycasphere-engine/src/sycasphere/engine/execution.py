@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-30
 最后修改  : 2026-07-31
-版本号    : v1.1.0
+版本号    : v1.2.0
 
 ■ 用途说明:
   执行后端中立、同步阻塞且可协作取消的批量 Truth 仿真。
@@ -22,11 +22,13 @@
   ✓ 保留首因结构化错误并隔离清理异常
   ✓ 批大小只改变 sink 调用粒度
   ✓ 重验证第三方 runtime 的时刻、科学快照和机动结果
+  ✓ 按航天器隔离同历元机动状态连续性
 
 ■ 待办事项:
   - 无
 
 ■ 更新日志:
+  v1.2.0 (2026-07-31): 按航天器分别校验交错同历元机动链。
   v1.1.0 (2026-07-31): 加固 runtime 输出契约并在提交前验证完成结果。
   v1.0.0 (2026-07-30): 初始版本。
 
@@ -602,7 +604,7 @@ class BatchRunner:
                     return cancel_active(reached_epoch)
 
                 maneuver_records: list[TruthManeuver] = []
-                previous_state_after: TruthState | None = None
+                previous_state_after_by_entity: dict[str, TruthState] = {}
                 for entry in group.maneuvers:
                     physical = _snapshot_maneuver_execution(
                         runtime.execute_impulsive_maneuver(entry),
@@ -610,6 +612,7 @@ class BatchRunner:
                         expected_epoch=group.epoch,
                         adapter=time_adapter,
                     )
+                    previous_state_after = previous_state_after_by_entity.get(entry.spacecraft_id)
                     if (
                         previous_state_after is not None
                         and physical.state_before != previous_state_after
@@ -645,7 +648,7 @@ class BatchRunner:
                             state_after=physical.state_after,
                         )
                     )
-                    previous_state_after = physical.state_after
+                    previous_state_after_by_entity[entry.spacecraft_id] = physical.state_after
 
                 truth_records: tuple[TruthState, ...] | None = None
                 attitude_records: tuple[AttitudeState, ...] | None = None
