@@ -33,6 +33,15 @@
 - 可表示的普通值和亚正规正方差继续接受；
 - 不使用硬编码数量级阈值，由实际目标 `float` 表示结果决定是否合法。
 
+每次平方均使用新建的运算 `Context`，因此不依赖活动 decimal context，也不依赖可变的
+`DefaultContext`。该 Context 显式设置 `prec=40`、`rounding=ROUND_HALF_EVEN`、
+`Emin=-999999`、`Emax=999999`、`capitals=1`、`clamp=0`、`flags=[]` 与 `traps=[]`，
+并以该 Context 的 `multiply` 计算同一 `Decimal(str(value))` 的乘积。任何
+`Decimal`／转换失败，以及转换后的零值或非有限值，均映射为已批准的 Pydantic 消息
+`standard-deviation variance must be representable as a finite float`。精度 40 足以精确容纳
+任意有限内置 `float` 的十进制字符串平方：该字符串最多有 17 个有效数字，乘积最多需要
+34 个有效数字。
+
 拒绝发生在 `StandardDeviations` 的 Pydantic 验证边界。因此公开工厂继续以
 `ValidationError` 报告输入问题，不泄漏 `Decimal`、`OverflowError` 或其他内部异常。
 
@@ -61,7 +70,9 @@ ObservationMeasurement snapshot/revalidation
 
 错误语义如下：
 
-- 非内置浮点、负值、非有限值、维度不一致继续使用现有验证错误；
+- 非内置浮点、负值、非有限值、维度不一致继续使用现有验证错误；其中正无穷和 `NaN`
+  不进入派生方差错误路径，而是继续由既有 `StrictFiniteFloat` 给出有限数错误；
+- 负值仍先按既有顺序触发“必须非负”语义，未改变其验证顺序；
 - 非零平方下溢和平方上溢使用明确的“方差无法表示为有限 float”验证错误；
 - 不增加稳定机器错误码，因为 Core Pydantic 字段验证当前没有该类应用层错误包装；
 - 不改变已有协方差对称性、半正定、公差和 NumPy `errstate` 规则。
@@ -72,7 +83,8 @@ Engine Sink 生产实现保持不变，只扩充测试断言。
 
 ### 4.1 稳定错误详情
 
-回归测试必须同时锁定 category、code 和 context：
+回归测试必须同时锁定 category、code 和 context。非法批次的锁定覆盖三种公开 Sink
+实现（`NullOutputSink`、`InMemoryOutputSink`、`CompositeOutputSink`）及三个写入通道：
 
 - 非法批次：`engine.sink.invalid_batch`，包含 `channel` 和 `expected_type`；
 - 非法生命周期操作：`engine.sink.invalid_state`，包含 `operation` 和当前 `status`；
@@ -105,9 +117,15 @@ Engine Sink 生产实现保持不变，只扩充测试断言。
    行为；该项可能从基线即为 GREEN，不伪造 RED；
 3. 实现最小可表示性检查，使下溢测试转为 GREEN，并把上下溢统一收口到标准差验证
    边界；
-4. 证明 `0.0`、普通标准差、可表示亚正规方差和直接协方差路径不回归；
-5. 增加 Sink 稳定 detail 断言；
-6. 增加 begin 回滚失败后的完整状态矩阵断言。
+4. 增加 hostile 活动 decimal context（精度、指数与 trap）回归，并证明 `0.0`、普通
+   标准差、可表示亚正规方差和直接协方差路径不回归；
+5. 增加被篡改 `DefaultContext` 的表征回归，以及正无穷／`NaN` 仍使用
+   `StrictFiniteFloat` 有限数消息的回归；
+6. 增加 Sink 稳定 detail 断言；
+7. 增加 begin 回滚失败后的完整状态矩阵断言。
+
+独立审查后已接受上述 Context 隔离、非有限消息与 Sink 参数化覆盖的最终修订；该记录仅
+同步已接受的审查结论，不替代或声称任何未记录的命令执行结果。
 
 最终执行：
 

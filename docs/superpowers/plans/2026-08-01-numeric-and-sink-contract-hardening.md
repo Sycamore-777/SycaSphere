@@ -16,6 +16,8 @@
 - Preserve Core's existing public float covariance Schema and Engine's existing public Sink API.
 - Standard deviation `0.0` remains valid and produces variance `0.0`.
 - A nonzero standard deviation whose square becomes `0.0` or non-finite as a built-in float must fail through Pydantic validation.
+- Square each finite standard deviation with a new, explicit `decimal.Context`: `prec=40`, `rounding=ROUND_HALF_EVEN`, `Emin=-999999`, `Emax=999999`, `capitals=1`, `clamp=0`, `flags=[]`, and `traps=[]`. Do not use ambient-context exponentiation.
+- Positive infinity and `NaN` must continue to fail through the existing `StrictFiniteFloat` finite-number error; preserve the existing negative-value validation order.
 - Directly supplied finite covariance values, including `5e-324`, retain their current semantics.
 - Do not add Composite cleanup retry behavior.
 - Update every modified Python file's Sycamore header accurately with date `2026-08-01`.
@@ -81,6 +83,12 @@ def test_uncertainty_factory_accepts_representable_subnormal_derived_variance() 
     assert uncertainty.covariance == ((1.0e-320, 0.0), (0.0, 0.0))
 ```
 
+Also add four behavioral regressions: derived underflow, derived overflow, hostile active
+decimal contexts (precision plus exponent/trap settings), and the positive-infinity/`NaN`
+finite-number message. Add one `DefaultContext` mutation characterization that verifies the
+same ordinary, subnormal, underflow, and nonfinite outcomes. The `DefaultContext` test is
+immediate GREEN structural coverage of explicit Context construction, not a fabricated RED.
+
 - [ ] **Step 2: Run the rejection test and verify the expected RED**
 
 Run:
@@ -102,6 +110,9 @@ v1.3.0 (2026-08-01): 拒绝无法表示为有限浮点数的标准差派生方�
 Replace the current standard-deviation helper block with:
 
 ```python
+from decimal import Context, Decimal, DecimalException, ROUND_HALF_EVEN
+
+
 _UNREPRESENTABLE_VARIANCE_MESSAGE = (
     "standard-deviation variance must be representable as a finite float"
 )
@@ -110,8 +121,19 @@ _UNREPRESENTABLE_VARIANCE_MESSAGE = (
 def _square_standard_deviation(value: float) -> float:
     """Square one normalized decimal float and require faithful float representation."""
     try:
-        variance = float(Decimal(str(value)) ** 2)
-    except (OverflowError, ValueError):
+        operation_context = Context(
+            prec=40,
+            rounding=ROUND_HALF_EVEN,
+            Emin=-999_999,
+            Emax=999_999,
+            capitals=1,
+            clamp=0,
+            flags=[],
+            traps=[],
+        )
+        decimal_value = Decimal(str(value))
+        variance = float(operation_context.multiply(decimal_value, decimal_value))
+    except (DecimalException, OverflowError, ValueError):
         raise ValueError(_UNREPRESENTABLE_VARIANCE_MESSAGE) from None
     if not math.isfinite(variance) or (value != 0.0 and variance == 0.0):
         raise ValueError(_UNREPRESENTABLE_VARIANCE_MESSAGE)
@@ -124,22 +146,32 @@ def _require_standard_deviation_sequence(value: Any) -> Any:
     if any(component < 0.0 for component in values):
         raise ValueError("standard_deviations must be nonnegative")
     for component in values:
-        _square_standard_deviation(component)
+        if math.isfinite(component):
+            _square_standard_deviation(component)
     return values
 ```
 
-Keep `StandardDeviations` and `from_standard_deviations()` signatures unchanged. The factory may call `_square_standard_deviation()` again while building its diagonal tuple; duplicating this tiny deterministic calculation is preferable to changing the validated public input type.
+Keep `StandardDeviations` and `from_standard_deviations()` signatures unchanged. The
+finite-only guard intentionally leaves positive infinity and `NaN` for `StrictFiniteFloat` to
+reject with its established message. Precision 40 is sufficient because a finite built-in-float
+decimal string has at most 17 significant digits, so its exact square has at most 34 product
+digits. The factory may call `_square_standard_deviation()` again while building its diagonal
+tuple; duplicating this tiny deterministic calculation is preferable to changing the validated
+public input type.
 
 - [ ] **Step 4: Run focused Core tests and verify GREEN**
 
 Run serially:
 
 ```powershell
-uv run --offline --cache-dir D:/program/github/my_github/SycaSphere/.uv-cache pytest packages/sycasphere-core/tests/test_observations.py::test_uncertainty_factory_rejects_unrepresentable_derived_variance packages/sycasphere-core/tests/test_observations.py::test_uncertainty_factory_accepts_representable_subnormal_derived_variance packages/sycasphere-core/tests/test_observations.py::test_uncertainty_factory_accepts_zero_standard_deviation packages/sycasphere-core/tests/test_observations.py::test_uncertainty_accepts_subnormal_psd_with_strict_numpy_errstate -q
+uv run --offline --cache-dir D:/program/github/my_github/SycaSphere/.uv-cache pytest packages/sycasphere-core/tests/test_observations.py::test_uncertainty_factory_rejects_unrepresentable_derived_variance packages/sycasphere-core/tests/test_observations.py::test_uncertainty_factory_isolates_decimal_precision_from_caller_context packages/sycasphere-core/tests/test_observations.py::test_uncertainty_factory_isolates_decimal_exponents_from_caller_context packages/sycasphere-core/tests/test_observations.py::test_uncertainty_factory_preserves_finite_number_error_for_nonfinite_deviation packages/sycasphere-core/tests/test_observations.py::test_uncertainty_factory_is_independent_of_mutated_default_decimal_context packages/sycasphere-core/tests/test_observations.py::test_uncertainty_factory_accepts_representable_subnormal_derived_variance packages/sycasphere-core/tests/test_observations.py::test_uncertainty_factory_accepts_zero_standard_deviation packages/sycasphere-core/tests/test_observations.py::test_uncertainty_accepts_subnormal_psd_with_strict_numpy_errstate -q
 uv run --offline --cache-dir D:/program/github/my_github/SycaSphere/.uv-cache pytest packages/sycasphere-core/tests/test_observations.py -q
 ```
 
-Expected: all selected cases pass, then the complete observation test module passes with no warnings.
+Expected: all selected cases pass, including the four behavioral regressions (underflow,
+overflow, hostile active context, and nonfinite-message preservation) and the immediate-GREEN
+`DefaultContext` structural characterization; then the complete observation test module passes
+with no warnings.
 
 - [ ] **Step 5: Format, lint, type-check, and commit Task 1**
 
@@ -201,6 +233,12 @@ Leave the remaining lifecycle assertions intact so all existing transition cover
 
 Inside `test_writes_require_nonempty_exact_tuples()`, derive exact expected values before the invalid-batch loop and add assertions inside it:
 
+Parameterize the factory as `NullOutputSink`, `lambda: InMemoryOutputSink(max_records=10)`,
+and `lambda: CompositeOutputSink(())`; annotate it as
+`Callable[[], NullOutputSink | InMemoryOutputSink | CompositeOutputSink]`. This locks every
+invalid-batch category/code/context combination for all three public Sink implementations and
+all three channels.
+
 ```python
     expected_channel = method_name.removeprefix("write_")
     expected_type = type(valid_item).__name__
@@ -238,7 +276,7 @@ Run:
 uv run --offline --cache-dir D:/program/github/my_github/SycaSphere/.uv-cache pytest packages/sycasphere-engine/tests/test_sinks.py -k "lifecycle_rejects_calls_outside_writing or writes_require_nonempty_exact_tuples or in_memory_limit_aborts_and_clears" -q
 ```
 
-Expected: 10 selected parameter cases pass. These tests are expected to be GREEN immediately because they lock already-implemented behavior; do not modify Engine production code to manufacture a RED phase.
+Expected: 13 selected parameter cases pass. These tests are expected to be GREEN immediately because they lock already-implemented behavior; do not modify Engine production code to manufacture a RED phase.
 
 - [ ] **Step 6: Format, lint, and commit Task 2**
 
@@ -353,7 +391,7 @@ uv run --offline --cache-dir D:/program/github/my_github/SycaSphere/.uv-cache my
 uv run --offline --cache-dir D:/program/github/my_github/SycaSphere/.uv-cache pytest
 ```
 
-Expected: 71 Python files are formatted, Ruff reports no lint errors, mypy reports no issues in 36 source files, and pytest reports 1060 passed.
+Expected: 71 Python files are formatted, Ruff reports no lint errors, mypy reports no issues in 36 source files, and pytest reports 1068 passed.
 
 - [ ] **Step 2: Audit the complete branch diff**
 
@@ -384,6 +422,11 @@ Review `a8cb653..HEAD` against:
 
 The reviewer must classify findings as Critical, Important, or Minor and explicitly state whether the branch is ready to merge. Do not waive a finding without concrete contradictory code evidence. Any accepted behavior fix requires a focused regression test, recorded RED/GREEN, a separate commit, and a repeat of Step 1.
 
+**Accepted final-review follow-up:** Independent review accepted the explicit per-operation
+Context, finite-only guard, nonfinite-message preservation, `DefaultContext` characterization,
+and complete Sink factory/channel parameterization. This plan records that accepted review
+outcome only; it does not assert unrecorded command execution.
+
 ---
 
 ## Final Acceptance Checklist
@@ -394,6 +437,6 @@ The reviewer must classify findings as Critical, Important, or Minor and explici
 4. No public Schema, API, dependency, `uv.lock`, or Engine source changes occur.
 5. Stable Sink categories, codes, and contexts are regression-tested.
 6. Composite begin rollback failure preserves first cause and the exact `WRITING/NEW` state matrix.
-7. Ruff, mypy, and 1060 pytest cases pass.
+7. Ruff, mypy, and 1068 pytest cases pass.
 8. Independent review has no unresolved findings.
 9. `docs/assets/`, Session, Orekit, Observation runtime, Sim, Platform, and frontend remain untouched.
