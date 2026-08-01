@@ -6,8 +6,8 @@
 文件名    : test_sinks.py
 创建者    : Sycamore
 创建日期  : 2026-07-30
-最后修改  : 2026-07-30
-版本号    : v1.0.0
+最后修改  : 2026-08-01
+版本号    : v1.1.0
 
 ■ 用途说明:
   验证内置输出 sink 的严格生命周期、有界内存和组合故障清理语义。
@@ -19,11 +19,13 @@
 ■ 功能特性:
   ✓ 覆盖 NEW、WRITING、COMMITTED 和 ABORTED 状态转换。
   ✓ 覆盖精确批次类型、容量耗尽和组合 sink 固定顺序。
+  ✓ 锁定 Sink 验证与容量错误的稳定详情。
 
 ■ 待办事项:
   - 无
 
 ■ 更新日志:
+  v1.1.0 (2026-08-01): 锁定 Sink 验证与容量错误的稳定详情。
   v1.0.0 (2026-07-30): 初始版本。
 
 "心之所向，素履以往；生如逆旅，一苇以航。"
@@ -201,8 +203,14 @@ def test_sink_lifecycle_rejects_calls_outside_writing(
     summary = SimulationOutputSummary()
 
     assert sink.status is SinkStatus.NEW
-    with pytest.raises(SimulationExecutionError, match="state"):
+    with pytest.raises(SimulationExecutionError) as caught:
         sink.write_truth_states((truth_state,))
+    assert caught.value.detail.category is ErrorCategory.VALIDATION_ERROR
+    assert caught.value.detail.code == "engine.sink.invalid_state"
+    assert caught.value.detail.context == {
+        "operation": "write_truth_states",
+        "status": "NEW",
+    }
     with pytest.raises(SimulationExecutionError, match="state"):
         sink.commit(summary)
     with pytest.raises(SimulationExecutionError, match="state"):
@@ -266,11 +274,18 @@ def test_writes_require_nonempty_exact_tuples(
     sink = factory()
     sink.begin(make_manifest())
     write = cast(Callable[[Any], None], getattr(sink, method_name))
+    expected_channel = method_name.removeprefix("write_")
+    expected_type = type(valid_item).__name__
 
     for invalid_batch in ([], (), (object(),)):
         with pytest.raises(SimulationExecutionError) as caught:
             write(invalid_batch)
         assert caught.value.detail.category is ErrorCategory.VALIDATION_ERROR
+        assert caught.value.detail.code == "engine.sink.invalid_batch"
+        assert caught.value.detail.context == {
+            "channel": expected_channel,
+            "expected_type": expected_type,
+        }
         assert sink.status is SinkStatus.WRITING
 
     write((valid_item,))
@@ -336,6 +351,12 @@ def test_in_memory_limit_aborts_and_clears() -> None:
     with pytest.raises(SimulationExecutionError) as caught:
         sink.write_truth_states((truth_state, truth_state))
     assert caught.value.detail.category is ErrorCategory.RESOURCE_EXHAUSTED
+    assert caught.value.detail.code == "engine.sink.memory_limit_exceeded"
+    assert caught.value.detail.context == {
+        "max_records": 1,
+        "retained_count": 0,
+        "batch_count": 2,
+    }
     assert sink.truth_states == ()
     assert sink.status is SinkStatus.ABORTED
 
