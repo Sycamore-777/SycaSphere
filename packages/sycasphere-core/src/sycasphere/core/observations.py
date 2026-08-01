@@ -6,8 +6,8 @@
 文件名    : observations.py
 创建者    : Sycamore
 创建日期  : 2026-07-28
-最后修改  : 2026-07-29
-版本号    : v1.2.1
+最后修改  : 2026-08-01
+版本号    : v1.3.0
 
 ■ 用途说明:
   定义算法安全的观测主体身份、事件、测量、有效残余协方差和 Ideal/Reported 载荷契约。
@@ -22,11 +22,13 @@
   ✓ 分离内部真值目标身份与算法可见主体身份
   ✓ 重验公开主体实例并严格验证标准测量的原始 qualifier
   ✓ 数值稳定地验证协方差并隔离 Ideal/Reported 通道中的真值和实际误差
+  ✓ 拒绝无法表示为有限浮点数的标准差派生方差
 
 ■ 待办事项:
   - [ ] 无
 
 ■ 更新日志:
+  v1.3.0 (2026-08-01): 拒绝无法表示为有限浮点数的标准差派生方差。
   v1.2.1 (2026-07-29): 隔离协方差归一化的预期 underflow 数值状态
   v1.2.0 (2026-07-29): 加固主体重验、RANGE_RATE qualifier 和极值协方差校验
   v1.1.0 (2026-07-28): 增加有效残余协方差和独立 Ideal/Reported 观测模型
@@ -91,17 +93,30 @@ type MeasurementValues = tuple[StrictFiniteFloat, ...]
 type CovarianceMatrix = tuple[tuple[StrictFiniteFloat, ...], ...]
 
 
-def _require_standard_deviation_sequence(value: Any) -> Any:
-    """Require built-in finite floats and reject negative standard deviations."""
-    values = require_builtin_float_sequence(value, "standard_deviations")
-    if any(component < 0.0 for component in values):
-        raise ValueError("standard_deviations must be nonnegative")
-    return values
+_UNREPRESENTABLE_VARIANCE_MESSAGE = (
+    "standard-deviation variance must be representable as a finite float"
+)
 
 
 def _square_standard_deviation(value: float) -> float:
-    """Square the normalized decimal float representation deterministically."""
-    return float(Decimal(str(value)) ** 2)
+    """Square one normalized decimal float and require faithful float representation."""
+    try:
+        variance = float(Decimal(str(value)) ** 2)
+    except (OverflowError, ValueError):
+        raise ValueError(_UNREPRESENTABLE_VARIANCE_MESSAGE) from None
+    if not math.isfinite(variance) or (value != 0.0 and variance == 0.0):
+        raise ValueError(_UNREPRESENTABLE_VARIANCE_MESSAGE)
+    return variance
+
+
+def _require_standard_deviation_sequence(value: Any) -> Any:
+    """Require nonnegative finite floats whose derived variances are representable."""
+    values = require_builtin_float_sequence(value, "standard_deviations")
+    if any(component < 0.0 for component in values):
+        raise ValueError("standard_deviations must be nonnegative")
+    for component in values:
+        _square_standard_deviation(component)
+    return values
 
 
 type StandardDeviations = Annotated[

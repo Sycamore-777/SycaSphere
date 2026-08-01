@@ -6,8 +6,8 @@
 文件名    : test_observations.py
 创建者    : Sycamore
 创建日期  : 2026-07-28
-最后修改  : 2026-07-29
-版本号    : v1.2.1
+最后修改  : 2026-08-01
+版本号    : v1.3.0
 
 ■ 用途说明:
   验证观测身份、事件、测量、有效残余协方差和独立 Ideal/Reported 载荷契约。
@@ -21,11 +21,13 @@
   ✓ 覆盖标准测量的精确分量、单位、帧、范围和 qualifier 语义
   ✓ 覆盖公开主体实例旁路与内部真值身份隔离
   ✓ 覆盖有效残余协方差极值稳定性和 Ideal/Reported 独立模型
+  ✓ 覆盖标准差派生方差的可表示性边界
 
 ■ 待办事项:
   - [ ] 无
 
 ■ 更新日志:
+  v1.3.0 (2026-08-01): 增加标准差平方可表示性边界回归测试。
   v1.2.1 (2026-07-29): 增加调用方严格 NumPy error-state 下的次正规 PSD 回归测试
   v1.2.0 (2026-07-29): 增加主体重验、严格积分时间和极值协方差回归测试
   v1.1.0 (2026-07-28): 增加协方差和 Ideal/Reported 通道契约测试
@@ -710,6 +712,31 @@ def test_uncertainty_factory_accepts_zero_standard_deviation() -> None:
     )
 
     assert uncertainty.covariance == ((0.0, 0.0), (0.0, 0.0))
+
+
+@pytest.mark.parametrize("deviation", [1.0e-200, 1.0e200])
+def test_uncertainty_factory_rejects_unrepresentable_derived_variance(
+    deviation: float,
+) -> None:
+    """A nonzero deviation cannot become zero or non-finite covariance."""
+    with pytest.raises(
+        ValidationError,
+        match="standard-deviation variance must be representable as a finite float",
+    ):
+        MeasurementUncertainty.from_standard_deviations(
+            valid_ra_dec_measurement(),
+            (deviation, 1.0),
+        )
+
+
+def test_uncertainty_factory_accepts_representable_subnormal_derived_variance() -> None:
+    """A derived positive subnormal float remains a valid covariance entry."""
+    uncertainty = MeasurementUncertainty.from_standard_deviations(
+        valid_ra_dec_measurement(),
+        (1.0e-160, 0.0),
+    )
+
+    assert uncertainty.covariance == ((1.0e-320, 0.0), (0.0, 0.0))
 
 
 def test_uncertainty_covariance_is_an_alias_independent_immutable_snapshot() -> None:
