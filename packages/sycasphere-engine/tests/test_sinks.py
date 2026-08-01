@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-30
 最后修改  : 2026-08-01
-版本号    : v1.2.0
+版本号    : v1.3.0
 
 ■ 用途说明:
   验证内置输出 sink 的严格生命周期、有界内存和组合故障清理语义。
@@ -21,11 +21,13 @@
   ✓ 覆盖精确批次类型、容量耗尽和组合 sink 固定顺序。
   ✓ 锁定 Sink 验证与容量错误的稳定详情。
   ✓ 锁定 Composite begin 回滚失败后的真实状态矩阵。
+  ✓ 覆盖空 Composite Sink 的无效批次稳定错误详情。
 
 ■ 待办事项:
   - 无
 
 ■ 更新日志:
+  v1.3.0 (2026-08-01): 覆盖空 Composite Sink 的无效批次稳定错误详情。
   v1.2.0 (2026-08-01): 锁定 Composite begin 回滚失败后的真实状态矩阵。
   v1.1.0 (2026-08-01): 锁定 Sink 验证与容量错误的稳定详情。
   v1.0.0 (2026-07-30): 初始版本。
@@ -266,9 +268,16 @@ def test_abort_is_idempotent_only_after_abort(
         ("write_truth_maneuvers", make_truth_maneuver()),
     ],
 )
-@pytest.mark.parametrize("factory", [NullOutputSink, lambda: InMemoryOutputSink(max_records=10)])
+@pytest.mark.parametrize(
+    "factory",
+    [
+        NullOutputSink,
+        lambda: InMemoryOutputSink(max_records=10),
+        lambda: CompositeOutputSink(()),
+    ],
+)
 def test_writes_require_nonempty_exact_tuples(
-    factory: Callable[[], NullOutputSink | InMemoryOutputSink],
+    factory: Callable[[], NullOutputSink | InMemoryOutputSink | CompositeOutputSink],
     method_name: str,
     valid_item: TruthState | AttitudeState | TruthManeuver,
 ) -> None:
