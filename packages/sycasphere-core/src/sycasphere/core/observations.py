@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-28
 最后修改  : 2026-08-01
-版本号    : v1.3.1
+版本号    : v1.3.2
 
 ■ 用途说明:
   定义算法安全的观测主体身份、事件、测量、有效残余协方差和 Ideal/Reported 载荷契约。
@@ -23,12 +23,13 @@
   ✓ 重验公开主体实例并严格验证标准测量的原始 qualifier
   ✓ 数值稳定地验证协方差并隔离 Ideal/Reported 通道中的真值和实际误差
   ✓ 拒绝无法表示为有限浮点数的标准差派生方差
-  ✓ 隔离标准差平方的十进制上下文并保留非有限值的严格验证语义
+  ✓ 完整固定标准差平方的十进制上下文并保留非有限值的严格验证语义
 
 ■ 待办事项:
   - [ ] 无
 
 ■ 更新日志:
+  v1.3.2 (2026-08-01): 固定十进制运算上下文的全部可变构造字段。
   v1.3.1 (2026-08-01): 隔离标准差平方上下文并保留非有限标准差的严格验证错误。
   v1.3.0 (2026-08-01): 拒绝无法表示为有限浮点数的标准差派生方差。
   v1.2.1 (2026-07-29): 隔离协方差归一化的预期 underflow 数值状态
@@ -44,7 +45,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Mapping, Sequence
-from decimal import Context, Decimal, DecimalException
+from decimal import ROUND_HALF_EVEN, Context, Decimal, DecimalException
 from enum import StrEnum
 from typing import Annotated, Any, Literal, cast
 
@@ -103,7 +104,16 @@ _UNREPRESENTABLE_VARIANCE_MESSAGE = (
 def _square_standard_deviation(value: float) -> float:
     """Square one normalized decimal float and require faithful float representation."""
     try:
-        operation_context = Context(prec=40, Emin=-999_999, Emax=999_999)
+        operation_context = Context(
+            prec=40,
+            rounding=ROUND_HALF_EVEN,
+            Emin=-999_999,
+            Emax=999_999,
+            capitals=1,
+            clamp=0,
+            flags=[],
+            traps=[],
+        )
         decimal_value = Decimal(str(value))
         variance = float(operation_context.multiply(decimal_value, decimal_value))
     except (DecimalException, OverflowError, ValueError):

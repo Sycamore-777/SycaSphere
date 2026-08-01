@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-28
 最后修改  : 2026-08-01
-版本号    : v1.3.1
+版本号    : v1.3.2
 
 ■ 用途说明:
   验证观测身份、事件、测量、有效残余协方差和独立 Ideal/Reported 载荷契约。
@@ -22,12 +22,13 @@
   ✓ 覆盖公开主体实例旁路与内部真值身份隔离
   ✓ 覆盖有效残余协方差极值稳定性和 Ideal/Reported 独立模型
   ✓ 覆盖标准差派生方差的可表示性边界
-  ✓ 覆盖标准差平方的十进制上下文隔离与非有限值错误语义
+  ✓ 覆盖默认十进制上下文变异下的完整隔离与非有限值错误语义
 
 ■ 待办事项:
   - [ ] 无
 
 ■ 更新日志:
+  v1.3.2 (2026-08-01): 增加默认十进制上下文全部可变字段的隔离特征测试。
   v1.3.1 (2026-08-01): 增加十进制上下文隔离与非有限标准差错误语义回归测试。
   v1.3.0 (2026-08-01): 增加标准差平方可表示性边界回归测试。
   v1.2.1 (2026-07-29): 增加调用方严格 NumPy error-state 下的次正规 PSD 回归测试
@@ -43,7 +44,7 @@ from __future__ import annotations
 import math
 import warnings
 from collections.abc import Mapping
-from decimal import Overflow, localcontext
+from decimal import ROUND_DOWN, DefaultContext, Inexact, Overflow, Rounded, localcontext
 from types import MappingProxyType
 
 import numpy as np
@@ -740,6 +741,44 @@ def test_uncertainty_factory_isolates_decimal_exponents_from_caller_context() ->
         )
 
     assert uncertainty.covariance == ((10_000.0, 0.0), (0.0, 1.0))
+
+
+def test_uncertainty_factory_is_independent_of_mutated_default_decimal_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default decimal settings cannot alter public factory semantics."""
+    monkeypatch.setattr(DefaultContext, "rounding", ROUND_DOWN)
+    monkeypatch.setitem(DefaultContext.traps, Inexact, True)
+    monkeypatch.setitem(DefaultContext.flags, Rounded, True)
+
+    ordinary = MeasurementUncertainty.from_standard_deviations(
+        valid_ra_dec_measurement(),
+        (1.25, 1.0),
+    )
+    subnormal = MeasurementUncertainty.from_standard_deviations(
+        valid_ra_dec_measurement(),
+        (1.0e-160, 0.0),
+    )
+
+    assert ordinary.covariance == ((1.5625, 0.0), (0.0, 1.0))
+    assert subnormal.covariance == ((1.0e-320, 0.0), (0.0, 0.0))
+    with pytest.raises(
+        ValidationError,
+        match="standard-deviation variance must be representable as a finite float",
+    ):
+        MeasurementUncertainty.from_standard_deviations(
+            valid_ra_dec_measurement(),
+            (1.0e-200, 1.0),
+        )
+    with pytest.raises(ValidationError) as error_info:
+        MeasurementUncertainty.from_standard_deviations(
+            valid_ra_dec_measurement(),
+            (math.inf, 1.0),
+        )
+
+    message = str(error_info.value)
+    assert "Input should be a finite number" in message
+    assert "standard-deviation variance must be representable as a finite float" not in message
 
 
 @pytest.mark.parametrize("deviation", [1.0e-200, 1.0e200])
