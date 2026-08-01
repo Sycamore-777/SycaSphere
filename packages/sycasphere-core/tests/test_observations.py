@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-28
 最后修改  : 2026-08-01
-版本号    : v1.3.0
+版本号    : v1.3.1
 
 ■ 用途说明:
   验证观测身份、事件、测量、有效残余协方差和独立 Ideal/Reported 载荷契约。
@@ -22,11 +22,13 @@
   ✓ 覆盖公开主体实例旁路与内部真值身份隔离
   ✓ 覆盖有效残余协方差极值稳定性和 Ideal/Reported 独立模型
   ✓ 覆盖标准差派生方差的可表示性边界
+  ✓ 覆盖标准差平方的十进制上下文隔离与非有限值错误语义
 
 ■ 待办事项:
   - [ ] 无
 
 ■ 更新日志:
+  v1.3.1 (2026-08-01): 增加十进制上下文隔离与非有限标准差错误语义回归测试。
   v1.3.0 (2026-08-01): 增加标准差平方可表示性边界回归测试。
   v1.2.1 (2026-07-29): 增加调用方严格 NumPy error-state 下的次正规 PSD 回归测试
   v1.2.0 (2026-07-29): 增加主体重验、严格积分时间和极值协方差回归测试
@@ -41,6 +43,7 @@ from __future__ import annotations
 import math
 import warnings
 from collections.abc import Mapping
+from decimal import Overflow, localcontext
 from types import MappingProxyType
 
 import numpy as np
@@ -714,6 +717,31 @@ def test_uncertainty_factory_accepts_zero_standard_deviation() -> None:
     assert uncertainty.covariance == ((0.0, 0.0), (0.0, 0.0))
 
 
+def test_uncertainty_factory_isolates_decimal_precision_from_caller_context() -> None:
+    """Caller precision cannot round a representable derived variance."""
+    with localcontext() as context:
+        context.prec = 1
+        uncertainty = MeasurementUncertainty.from_standard_deviations(
+            valid_ra_dec_measurement(),
+            (1.25, 1.0),
+        )
+
+    assert uncertainty.covariance == ((1.5625, 0.0), (0.0, 1.0))
+
+
+def test_uncertainty_factory_isolates_decimal_exponents_from_caller_context() -> None:
+    """Caller exponent traps cannot escape from variance derivation."""
+    with localcontext() as context:
+        context.Emax = 1
+        context.traps[Overflow] = True
+        uncertainty = MeasurementUncertainty.from_standard_deviations(
+            valid_ra_dec_measurement(),
+            (100.0, 1.0),
+        )
+
+    assert uncertainty.covariance == ((10_000.0, 0.0), (0.0, 1.0))
+
+
 @pytest.mark.parametrize("deviation", [1.0e-200, 1.0e200])
 def test_uncertainty_factory_rejects_unrepresentable_derived_variance(
     deviation: float,
@@ -727,6 +755,22 @@ def test_uncertainty_factory_rejects_unrepresentable_derived_variance(
             valid_ra_dec_measurement(),
             (deviation, 1.0),
         )
+
+
+@pytest.mark.parametrize("deviation", [math.inf, math.nan], ids=["infinity", "nan"])
+def test_uncertainty_factory_preserves_finite_number_error_for_nonfinite_deviation(
+    deviation: float,
+) -> None:
+    """Non-finite inputs retain the strict-finite boundary error."""
+    with pytest.raises(ValidationError) as error_info:
+        MeasurementUncertainty.from_standard_deviations(
+            valid_ra_dec_measurement(),
+            (deviation, 1.0),
+        )
+
+    message = str(error_info.value)
+    assert "Input should be a finite number" in message
+    assert "standard-deviation variance must be representable as a finite float" not in message
 
 
 def test_uncertainty_factory_accepts_representable_subnormal_derived_variance() -> None:
