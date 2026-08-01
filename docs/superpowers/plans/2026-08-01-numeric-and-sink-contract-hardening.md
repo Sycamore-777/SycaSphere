@@ -97,7 +97,10 @@ Run:
 uv run --offline --cache-dir D:/program/github/my_github/SycaSphere/.uv-cache pytest packages/sycasphere-core/tests/test_observations.py::test_uncertainty_factory_rejects_unrepresentable_derived_variance -q
 ```
 
-Expected: two parameter cases fail. The `1e-200` case reports that no exception was raised; the `1e200` case does not yet expose the approved representability message at the `StandardDeviations` boundary.
+Expected: both parameter cases are RED against the required boundary contract. The `1e-200`
+case reports that no exception was raised; the `1e200` case is rejected later by covariance
+validation (existing broad safety), rather than at the `StandardDeviations` boundary with the
+approved unified representability message.
 
 - [ ] **Step 3: Implement the minimum representability guard**
 
@@ -110,7 +113,7 @@ v1.3.0 (2026-08-01): 拒绝无法表示为有限浮点数的标准差派生方�
 Replace the current standard-deviation helper block with:
 
 ```python
-from decimal import Context, Decimal, DecimalException, ROUND_HALF_EVEN
+from decimal import ROUND_HALF_EVEN, Context, Decimal, DecimalException
 
 
 _UNREPRESENTABLE_VARIANCE_MESSAGE = (
