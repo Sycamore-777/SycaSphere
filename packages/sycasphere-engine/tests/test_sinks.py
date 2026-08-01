@@ -7,7 +7,7 @@
 创建者    : Sycamore
 创建日期  : 2026-07-30
 最后修改  : 2026-08-01
-版本号    : v1.1.0
+版本号    : v1.2.0
 
 ■ 用途说明:
   验证内置输出 sink 的严格生命周期、有界内存和组合故障清理语义。
@@ -20,11 +20,13 @@
   ✓ 覆盖 NEW、WRITING、COMMITTED 和 ABORTED 状态转换。
   ✓ 覆盖精确批次类型、容量耗尽和组合 sink 固定顺序。
   ✓ 锁定 Sink 验证与容量错误的稳定详情。
+  ✓ 锁定 Composite begin 回滚失败后的真实状态矩阵。
 
 ■ 待办事项:
   - 无
 
 ■ 更新日志:
+  v1.2.0 (2026-08-01): 锁定 Composite begin 回滚失败后的真实状态矩阵。
   v1.1.0 (2026-08-01): 锁定 Sink 验证与容量错误的稳定详情。
   v1.0.0 (2026-07-30): 初始版本。
 
@@ -483,6 +485,7 @@ def test_composite_begin_failure_preserves_error_when_rollback_also_fails() -> N
             failure=rollback_failure,
         ),
         RecordingSink("2", events, failure_method="begin", failure=begin_failure),
+        RecordingSink("3", events),
     )
     sink = CompositeOutputSink(cast(tuple[SimulationOutputSink, ...], children))
 
@@ -491,6 +494,10 @@ def test_composite_begin_failure_preserves_error_when_rollback_also_fails() -> N
 
     assert caught.value is begin_failure
     assert events == ["1.begin", "2.begin", "1.abort"]
+    assert children[0].status is SinkStatus.WRITING
+    assert children[1].status is SinkStatus.NEW
+    assert children[2].status is SinkStatus.NEW
+    assert sink.status is SinkStatus.NEW
 
 
 def test_composite_rejects_duplicate_child_identity() -> None:
